@@ -59,3 +59,21 @@ google-services.json
 *.keystore
 
 .gguf
+# AI Model files - should not be committed to git
+*.gguf
+*.bin
+*.safetensors
+*.pt
+*.pth
+*.onnx
+*.h5
+*.pb
+
+# Model directories
+models/
+ai_models/
+downloaded_models/
+
+# Large files that might be models
+*.model
+*.weights
