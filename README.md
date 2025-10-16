@@ -192,12 +192,26 @@ safeguardian/
 
 ### Build Instructions
 
+<<<<<<< HEAD
 1. **Clone repository**
+=======
+1. Install Java 17 (Windows PowerShell)
+   ```powershell
+   # Download and install JDK 17 (e.g., from Adoptium or Oracle)
+   # Then set environment variables for the current session
+   $env:JAVA_HOME = "C:\\Program Files\\Java\\jdk-17"
+   $env:PATH = "$env:JAVA_HOME\\bin;$env:PATH"
+   java -version  # should show 17.x
+   ```
+
+2. **Clone repository**
+>>>>>>> d49f50d (first commit)
    ```bash
    git clone <repo-url>
    cd safeguardian
    ```
 
+<<<<<<< HEAD
 2. **Open in Android Studio**
    - File → Open → Select `safeguardian/bitchat-android`
 
@@ -206,12 +220,26 @@ safeguardian/
    - Wait for Nexa SDK, VOSK, ObjectBox to download
 
 4. **Build**
+=======
+3. **Open in Android Studio**
+   - File → Open → Select `safeguardian/bitchat-android`
+
+4. **Sync Gradle**
+   - Android Studio will auto-sync dependencies
+   - Wait for Nexa SDK, VOSK, ObjectBox to download
+
+5. **Build**
+>>>>>>> d49f50d (first commit)
    ```bash
    cd bitchat-android
    ./gradlew assembleDebug
    ```
 
+<<<<<<< HEAD
 5. **Install**
+=======
+6. **Install**
+>>>>>>> d49f50d (first commit)
    ```bash
    ./gradlew installDebug
    # or use Android Studio's Run button
