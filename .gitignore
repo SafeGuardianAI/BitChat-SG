@@ -12,6 +12,7 @@ git ad# AI Model files - should not be committed to git
 models/
 ai_models/
 downloaded_models/
+app/src/main/assets/models/
 
 # Large files that might be models
 *.model
