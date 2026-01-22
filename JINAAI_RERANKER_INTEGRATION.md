@@ -158,3 +158,7 @@ val response = aiChat.processMessage("question", useRAG = true)
 
 This integration provides a solid foundation for improved RAG capabilities in SafeGuardian while maintaining the app's privacy-first approach and battery efficiency goals.
 
+
+
+
+

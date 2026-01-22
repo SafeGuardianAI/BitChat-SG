@@ -183,3 +183,7 @@ class RerankerService {
 
 The system is now configured for GGUF and will automatically download the superior v3 model!
 
+
+
+
+
