@@ -3,7 +3,7 @@
 agp = "8.10.1"
 kotlin = "2.2.0"
 compileSdk = "35"
-minSdk = "26" # API 26 for proper BLE support
+minSdk = "27" # API 27 required by Nexa SDK (ai.nexa:core requires minSdk 27)
 targetSdk = "34"
 
 # AndroidX Core

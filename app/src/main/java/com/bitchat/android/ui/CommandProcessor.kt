@@ -1,6 +1,9 @@
 package com.bitchat.android.ui
 
 import com.bitchat.android.mesh.BluetoothMeshService
+import com.bitchat.android.ai.AIManager
+import com.bitchat.android.ai.AIChatService
+import kotlinx.coroutines.runBlocking
 import com.bitchat.android.model.BitchatMessage
 import java.util.Date
 
@@ -24,7 +27,31 @@ class CommandProcessor(
         CommandSuggestion("/m", listOf("/msg"), "<nickname> [message]", "send private message"),
         CommandSuggestion("/slap", emptyList(), "<nickname>", "slap someone with a trout"),
         CommandSuggestion("/unblock", emptyList(), "<nickname>", "unblock a peer"),
-        CommandSuggestion("/w", emptyList(), null, "see who's online")
+        CommandSuggestion("/w", emptyList(), null, "see who's online"),
+        CommandSuggestion("/ai", emptyList(), "[on|off]", "enable or disable AI chat"),
+        CommandSuggestion("/tts", emptyList(), "[on|off]", "enable or disable text-to-speech"),
+        CommandSuggestion("/rag", emptyList(), "[on|off]", "enable or disable retrieval-augmented generation"),
+        CommandSuggestion("/init-rag", emptyList(), null, "initialize RAG with documents from assets/storage"),
+        CommandSuggestion("/rag-status", emptyList(), null, "show RAG service status and statistics"),
+        CommandSuggestion("/structured", emptyList(), "[on|off]", "enable or disable structured output"),
+        CommandSuggestion("/structured-type", emptyList(), "[off|prompt|grammar]", "set structured output mode"),
+        CommandSuggestion("/ask", emptyList(), "<question>", "ask the AI a question"),
+        CommandSuggestion("/speak", emptyList(), "<text>", "speak text using TTS"),
+        CommandSuggestion("/voice-mode", emptyList(), null, "toggle voice mode"),
+        CommandSuggestion("/test-ai", emptyList(), null, "test AI model functionality"),
+        CommandSuggestion("/test-asr", emptyList(), null, "test ASR service functionality"),
+        CommandSuggestion("/models", emptyList(), null, "list downloaded models"),
+        CommandSuggestion("/select-model", emptyList(), "<model-id>", "select AI model to use"),
+        CommandSuggestion("/model-status", emptyList(), null, "show model selection status"),
+        CommandSuggestion("/recover", emptyList(), null, "recover from AI crash"),
+        CommandSuggestion("/download", emptyList(), "<model-id>", "download AI model from NexaAI Hub"),
+        CommandSuggestion("/test-rescue", emptyList(), null, "test rescue API connection"),
+        CommandSuggestion("/test-rescue-submit", emptyList(), null, "test victim report submission"),
+        CommandSuggestion("/test-tts", emptyList(), "<text>", "test text-to-speech"),
+        CommandSuggestion("/test-backend-switch", emptyList(), null, "test MongoDB/Firebase backend switching"),
+        CommandSuggestion("/test-diagnostics", emptyList(), null, "run full system diagnostics"),
+        CommandSuggestion("/debug-logs", emptyList(), null, "show debug logs"),
+        CommandSuggestion("/debug-clear", emptyList(), null, "clear debug logs"),
     )
     
     // MARK: - Command Processing
@@ -45,6 +72,31 @@ class CommandProcessor(
             "/hug" -> handleActionCommand(parts, "gives", "a warm hug 🫂", meshService, myPeerID, onSendMessage)
             "/slap" -> handleActionCommand(parts, "slaps", "around a bit with a large trout 🐟", meshService, myPeerID, onSendMessage)
             "/channels" -> handleChannelsCommand()
+            "/ai" -> handleAiToggle(parts, meshService)
+            "/tts" -> handleTtsToggle(parts, meshService)
+            "/asr" -> handleAsrToggle(parts, meshService)
+            "/rag" -> handleRagToggle(parts, meshService)
+            "/init-rag" -> handleInitRAG(meshService)
+            "/rag-status" -> handleRAGStatus(meshService)
+            "/structured" -> handleStructuredToggle(parts, meshService)
+            "/structured-type" -> handleStructuredTypeCommand(parts, meshService)
+            "/ask" -> handleAsk(parts, meshService)
+            "/speak" -> handleSpeak(parts, meshService)
+            "/voice-mode" -> handleVoiceMode(meshService)
+            "/test-ai" -> handleTestAI(meshService)
+            "/test-asr" -> handleTestASR(meshService)
+            "/models" -> handleListModels(meshService)
+            "/select-model" -> handleSelectModel(parts, meshService)
+            "/model-status" -> handleModelStatus(meshService)
+            "/recover" -> handleRecover(meshService)
+            "/download" -> handleDownload(parts, meshService)
+            "/test-rescue" -> handleTestRescueAPI(meshService)
+            "/test-rescue-submit" -> handleTestRescueSubmit(meshService)
+            "/test-tts" -> handleTestTTS(parts, meshService)
+            "/test-backend-switch" -> handleTestBackendSwitch(meshService)
+            "/test-diagnostics" -> handleTestDiagnostics(meshService)
+            "/debug-logs" -> handleShowDebugLogs()
+            "/debug-clear" -> handleClearDebugLogs()
             else -> handleUnknownCommand(cmd)
         }
         
@@ -356,6 +408,745 @@ class CommandProcessor(
         )
         messageManager.addMessage(systemMessage)
     }
+
+    // ===== AI COMMANDS =====
+    private fun getAI(contextService: BluetoothMeshService): Pair<AIManager, AIChatService> {
+        val context = contextService.getContext()
+        val aiManager = AIManager(context)
+        val aiChat = AIChatService(context, aiManager)
+        return Pair(aiManager, aiChat)
+    }
+
+    private fun handleAiToggle(parts: List<String>, meshService: BluetoothMeshService) {
+        val (ai, _) = getAI(meshService)
+        val arg = parts.getOrNull(1)?.lowercase()
+        
+        val shouldEnable = when (arg) {
+            "on" -> true
+            "off" -> false
+            else -> !ai.preferences.aiEnabled
+        }
+        
+        if (shouldEnable) {
+            // Enable and load model
+            runBlocking {
+                val result = ai.enableAI()
+                if (result.isSuccess) {
+                    val msg = com.bitchat.android.model.BitchatMessage(
+                        sender = "system",
+                        content = "ai enabled and model loaded successfully",
+                        timestamp = java.util.Date(),
+                        isRelay = false
+                    )
+                    messageManager.addMessage(msg)
+                } else {
+                    val error = result.exceptionOrNull()?.message ?: "unknown error"
+                    val msg = com.bitchat.android.model.BitchatMessage(
+                        sender = "system",
+                        content = "ai enable failed: $error",
+                        timestamp = java.util.Date(),
+                        isRelay = false
+                    )
+                    messageManager.addMessage(msg)
+                }
+            }
+        } else {
+            // Disable
+            ai.disableAI()
+            val msg = com.bitchat.android.model.BitchatMessage(
+                sender = "system",
+                content = "ai disabled",
+                timestamp = java.util.Date(),
+                isRelay = false
+            )
+            messageManager.addMessage(msg)
+        }
+    }
+
+    private fun handleTtsToggle(parts: List<String>, meshService: BluetoothMeshService) {
+        val (ai, _) = getAI(meshService)
+        val arg = parts.getOrNull(1)?.lowercase()
+        ai.preferences.ttsEnabled = when (arg) {
+            "on" -> true
+            "off" -> false
+            else -> !ai.preferences.ttsEnabled
+        }
+        val msg = com.bitchat.android.model.BitchatMessage(
+            sender = "system",
+            content = "tts ${if (ai.preferences.ttsEnabled) "enabled" else "disabled"}",
+            timestamp = java.util.Date(),
+            isRelay = false
+        )
+        messageManager.addMessage(msg)
+    }
+
+    private fun handleAsrToggle(parts: List<String>, meshService: BluetoothMeshService) {
+        val (ai, _) = getAI(meshService)
+        val arg = parts.getOrNull(1)?.lowercase()
+        ai.preferences.asrEnabled = when (arg) {
+            "on" -> true
+            "off" -> false
+            else -> !ai.preferences.asrEnabled
+        }
+        val msg = com.bitchat.android.model.BitchatMessage(
+            sender = "system",
+            content = "asr ${if (ai.preferences.asrEnabled) "enabled" else "disabled"}",
+            timestamp = java.util.Date(),
+            isRelay = false
+        )
+        messageManager.addMessage(msg)
+    }
+
+    private fun handleRagToggle(parts: List<String>, meshService: BluetoothMeshService) {
+        val (ai, _) = getAI(meshService)
+        val arg = parts.getOrNull(1)?.lowercase()
+        ai.preferences.ragEnabled = when (arg) {
+            "on" -> true
+            "off" -> false
+            else -> !ai.preferences.ragEnabled
+        }
+        val msg = com.bitchat.android.model.BitchatMessage(
+            sender = "system",
+            content = "rag ${if (ai.preferences.ragEnabled) "enabled" else "disabled"}",
+            timestamp = java.util.Date(),
+            isRelay = false
+        )
+        messageManager.addMessage(msg)
+    }
+
+    private fun handleInitRAG(meshService: BluetoothMeshService) {
+        val (ai, _) = getAI(meshService)
+        
+        runBlocking {
+            val msg = com.bitchat.android.model.BitchatMessage(
+                sender = "system",
+                content = "initializing RAG with documents...",
+                timestamp = java.util.Date(),
+                isRelay = false
+            )
+            messageManager.addMessage(msg)
+            
+            try {
+                val result = ai.initializeRAGWithDocuments()
+                if (result.isSuccess) {
+                    val chunkCount = result.getOrNull() ?: 0
+                    val stats = ai.getRAGStats()
+                    val statusMsg = com.bitchat.android.model.BitchatMessage(
+                        sender = "system",
+                        content = buildString {
+                            append("✅ RAG initialized successfully\n")
+                            append("📊 Added $chunkCount chunks\n")
+                            append("📚 Total chunks: ${stats.totalChunks}\n")
+                            append("📏 Embedding dimension: ${stats.embeddingDimension}\n")
+                            append("🔍 Has embeddings: ${stats.hasEmbeddings}\n")
+                            append("✅ Ready: ${stats.isReady}")
+                        },
+                        timestamp = java.util.Date(),
+                        isRelay = false
+                    )
+                    messageManager.addMessage(statusMsg)
+                } else {
+                    val error = result.exceptionOrNull()?.message ?: "unknown error"
+                    val errorMsg = com.bitchat.android.model.BitchatMessage(
+                        sender = "system",
+                        content = "❌ Failed to initialize RAG: $error",
+                        timestamp = java.util.Date(),
+                        isRelay = false
+                    )
+                    messageManager.addMessage(errorMsg)
+                }
+            } catch (e: Exception) {
+                val errorMsg = com.bitchat.android.model.BitchatMessage(
+                    sender = "system",
+                    content = "❌ Error initializing RAG: ${e.message}",
+                    timestamp = java.util.Date(),
+                    isRelay = false
+                )
+                messageManager.addMessage(errorMsg)
+            }
+        }
+    }
+
+    private fun handleRAGStatus(meshService: BluetoothMeshService) {
+        val (ai, _) = getAI(meshService)
+        
+        val stats = ai.getRAGStats()
+        val rerankerStatus = ai.getRerankerStatus()
+        val documentManager = ai.getDocumentManager()
+        
+        val statusMsg = com.bitchat.android.model.BitchatMessage(
+            sender = "system",
+            content = buildString {
+                append("📊 RAG Service Status\n")
+                append("═══════════════════════════════════\n")
+                append("🔍 RAG Ready: ${stats.isReady}\n")
+                append("📚 Total Chunks: ${stats.totalChunks}\n")
+                append("📏 Embedding Dimension: ${stats.embeddingDimension}\n")
+                append("🔢 Has Embeddings: ${stats.hasEmbeddings}\n")
+                append("⚙️ RAG Enabled: ${ai.preferences.ragEnabled}\n")
+                append("🎯 Rerank Enabled: ${ai.preferences.rerankEnabled}\n")
+                append("📈 Rerank Top N: ${ai.preferences.rerankTopN}\n")
+                append("🔧 Reranker Status: $rerankerStatus\n")
+                append("📁 PDFs in Assets: ${documentManager.getAvailablePDFsInAssets().size}\n")
+                append("📁 PDFs in Storage: ${documentManager.getAvailablePDFs().size}\n")
+                if (stats.totalChunks == 0) {
+                    append("\n💡 Use '/init-rag' to load documents")
+                }
+            },
+            timestamp = java.util.Date(),
+            isRelay = false
+        )
+        messageManager.addMessage(statusMsg)
+    }
+
+    private fun handleStructuredToggle(parts: List<String>, meshService: BluetoothMeshService) {
+        val (ai, _) = getAI(meshService)
+        val arg = parts.getOrNull(1)?.lowercase()
+        ai.preferences.structuredOutput = when (arg) {
+            "on" -> true
+            "off" -> false
+            else -> !ai.preferences.structuredOutput
+        }
+        val msg = com.bitchat.android.model.BitchatMessage(
+            sender = "system",
+            content = "structured output ${if (ai.preferences.structuredOutput) "enabled" else "disabled"}",
+            timestamp = java.util.Date(),
+            isRelay = false
+        )
+        messageManager.addMessage(msg)
+    }
+
+    private fun handleStructuredTypeCommand(parts: List<String>, meshService: BluetoothMeshService) {
+        val (ai, _) = getAI(meshService)
+        val arg = parts.getOrNull(1)?.lowercase()
+        ai.preferences.structuredOutputMode = when (arg) {
+            "off" -> com.bitchat.android.ai.StructuredOutputMode.OFF
+            "prompt" -> com.bitchat.android.ai.StructuredOutputMode.PROMPT
+            "grammar" -> com.bitchat.android.ai.StructuredOutputMode.GRAMMAR
+            else -> ai.preferences.structuredOutputMode
+        }
+        val msg = com.bitchat.android.model.BitchatMessage(
+            sender = "system",
+            content = "structured output type set to ${ai.preferences.structuredOutputMode}",
+            timestamp = java.util.Date(),
+            isRelay = false
+        )
+        messageManager.addMessage(msg)
+    }
+
+    private fun handleAsk(parts: List<String>, meshService: BluetoothMeshService) {
+        val (ai, aiChat) = getAI(meshService)
+        val question = parts.drop(1).joinToString(" ").trim()
+        if (question.isEmpty()) {
+            val msg = com.bitchat.android.model.BitchatMessage(
+                sender = "system",
+                content = "usage: /ask <question>",
+                timestamp = java.util.Date(),
+                isRelay = false
+            )
+            messageManager.addMessage(msg)
+            return
+        }
+        
+        runBlocking {
+            try {
+                // Check if AI is enabled
+                if (!ai.preferences.aiEnabled) {
+                    val msg = com.bitchat.android.model.BitchatMessage(
+                        sender = "system",
+                        content = "ai is disabled. use '/ai on' to enable it first",
+                        timestamp = java.util.Date(),
+                        isRelay = false
+                    )
+                    messageManager.addMessage(msg)
+                    return@runBlocking
+                }
+            
+            // Initialize SDK if not already initialized
+            if (!ai.aiService.isModelLoaded()) {
+                ai.initialize()
+                
+                // Load model
+                val modelId = ai.preferences.selectedLLMModel
+                val model = com.bitchat.android.ai.ModelCatalog.getModelById(modelId)
+                if (model == null) {
+                    val err = com.bitchat.android.model.BitchatMessage(
+                        sender = "system",
+                        content = "selected LLM model not found: $modelId",
+                        timestamp = java.util.Date(),
+                        isRelay = false
+                    )
+                    messageManager.addMessage(err)
+                    return@runBlocking
+                }
+                
+                // Check if downloaded
+                if (!ai.modelManager.isModelDownloaded(model)) {
+                    val err = com.bitchat.android.model.BitchatMessage(
+                        sender = "system",
+                        content = "model '${model.name}' not downloaded. please download it first",
+                        timestamp = java.util.Date(),
+                        isRelay = false
+                    )
+                    messageManager.addMessage(err)
+                    return@runBlocking
+                }
+                
+                val load = ai.aiService.loadModel(model)
+                if (load.isFailure) {
+                    val err = com.bitchat.android.model.BitchatMessage(
+                        sender = "system",
+                        content = "failed to load model '${model.name}': ${load.exceptionOrNull()?.message}",
+                        timestamp = java.util.Date(),
+                        isRelay = false
+                    )
+                    messageManager.addMessage(err)
+                    return@runBlocking
+                }
+            }
+            
+                // Stream response and collect all tokens
+                var fullAnswer = ""
+                val startTime = System.currentTimeMillis()
+                try {
+                    // Use streaming to progressively collect tokens
+                    aiChat.streamResponse(question, state.getCurrentChannelValue(), useRAG = ai.preferences.ragEnabled).collect { token ->
+                        fullAnswer += token
+                    }
+                    
+                    // Calculate final statistics
+                    val endTime = System.currentTimeMillis()
+                    val tokenCount = fullAnswer.split("\\s+".toRegex()).size
+                    val tokensPerSecond = if (endTime > startTime) {
+                        (tokenCount * 1000f) / (endTime - startTime)
+                    } else 0f
+                    
+                    // Create final message with statistics
+                    val msg = com.bitchat.android.model.BitchatMessage(
+                        sender = "ai",
+                        content = fullAnswer,
+                        timestamp = java.util.Date(),
+                        isRelay = false,
+                        isAIGenerated = true,
+                        aiTokenCount = tokenCount,
+                        aiGenerationTimeMs = endTime - startTime,
+                        aiTokensPerSecond = tokensPerSecond,
+                        aiProcessingUnit = "CPU" // TODO: Detect actual processing unit
+                    )
+                    messageManager.addMessage(msg)
+                } catch (e: Exception) {
+                    android.util.Log.e("CommandProcessor", "Error during streaming", e)
+                    val errorAnswer = "Error processing your question: ${e.message ?: "Unknown error"}. Try using '/recover' to reset the AI system."
+                    val errorMsg = com.bitchat.android.model.BitchatMessage(
+                        sender = "ai",
+                        content = errorAnswer,
+                        timestamp = java.util.Date(),
+                        isRelay = false
+                    )
+                    messageManager.addMessage(errorMsg)
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("CommandProcessor", "Critical error in ask command", e)
+                val errorMsg = com.bitchat.android.model.BitchatMessage(
+                    sender = "system",
+                    content = "Critical error processing question: ${e.message ?: "Unknown error"}. Try using '/recover' to reset the AI system.",
+                    timestamp = java.util.Date(),
+                    isRelay = false
+                )
+                messageManager.addMessage(errorMsg)
+            }
+        }
+    }
+
+    private fun handleSpeak(parts: List<String>, meshService: BluetoothMeshService) {
+        val (ai, _) = getAI(meshService)
+        val text = parts.drop(1).joinToString(" ").trim()
+        if (text.isEmpty()) {
+            val msg = com.bitchat.android.model.BitchatMessage(
+                sender = "system",
+                content = "usage: /speak <text>",
+                timestamp = java.util.Date(),
+                isRelay = false
+            )
+            messageManager.addMessage(msg)
+            return
+        }
+        ai.aiService.speak(text)
+    }
+
+    private fun handleVoiceMode(meshService: BluetoothMeshService) {
+        val (_, aiChat) = getAI(meshService)
+        // Check microphone permission first
+        val hasMic = aiChat.isVoiceInputAvailable()
+        if (!hasMic) {
+            val msg = com.bitchat.android.model.BitchatMessage(
+                sender = "system",
+                content = "microphone permission required. please grant it in app settings and enable ASR.",
+                timestamp = java.util.Date(),
+                isRelay = false
+            )
+            messageManager.addMessage(msg)
+            return
+        }
+        runBlocking {
+            val response = aiChat.processVoiceInput(channelId = state.getCurrentChannelValue())
+            val msg = com.bitchat.android.model.BitchatMessage(
+                sender = "ai",
+                content = response,
+                timestamp = java.util.Date(),
+                isRelay = false
+            )
+            messageManager.addMessage(msg)
+        }
+    }
+
+    private fun handleTestAI(meshService: BluetoothMeshService) {
+        val (ai, _) = getAI(meshService)
+        
+        runBlocking {
+            try {
+                val testResult = ai.aiService.testModel()
+                val msg = com.bitchat.android.model.BitchatMessage(
+                    sender = "system",
+                    content = "AI Test Result: $testResult",
+                    timestamp = java.util.Date(),
+                    isRelay = false
+                )
+                messageManager.addMessage(msg)
+            } catch (e: Exception) {
+                val errorMsg = com.bitchat.android.model.BitchatMessage(
+                    sender = "system",
+                    content = "AI Test Failed: ${e.message}",
+                    timestamp = java.util.Date(),
+                    isRelay = false
+                )
+                messageManager.addMessage(errorMsg)
+            }
+        }
+    }
+
+    private fun handleTestASR(meshService: BluetoothMeshService) {
+        val (_, aiChat) = getAI(meshService)
+        
+        runBlocking {
+            try {
+                val asrStatus = aiChat.getASRStatus()
+                val voiceAvailable = aiChat.isVoiceInputAvailable()
+                val micPermission = aiChat.hasMicrophonePermission()
+                
+                val statusMsg = buildString {
+                    append("ASR Test Results:\n")
+                    append("• Status: $asrStatus\n")
+                    append("• Voice Input Available: $voiceAvailable\n")
+                    append("• Microphone Permission: $micPermission\n")
+                    append("• ASR Enabled: ${aiChat.getAIManager().preferences.asrEnabled}")
+                }
+                
+                val msg = com.bitchat.android.model.BitchatMessage(
+                    sender = "system",
+                    content = statusMsg,
+                    timestamp = java.util.Date(),
+                    isRelay = false
+                )
+                messageManager.addMessage(msg)
+            } catch (e: Exception) {
+                val errorMsg = com.bitchat.android.model.BitchatMessage(
+                    sender = "system",
+                    content = "ASR Test Failed: ${e.message}",
+                    timestamp = java.util.Date(),
+                    isRelay = false
+                )
+                messageManager.addMessage(errorMsg)
+            }
+        }
+    }
+
+    private fun handleListModels(meshService: BluetoothMeshService) {
+        val (ai, _) = getAI(meshService)
+        
+        runBlocking {
+            try {
+                val downloadedModels = ai.modelManager.getDownloadedModels()
+                val currentModel = ai.preferences.getSelectedLLMModel()
+                
+                val modelList = if (downloadedModels.isEmpty()) {
+                    "No models downloaded. Use /download <model-id> to download a model."
+                } else {
+                    buildString {
+                        append("Downloaded Models:\n")
+                        downloadedModels.forEach { model ->
+                            val isSelected = model.id == currentModel?.id
+                            val status = if (isSelected) " [SELECTED]" else ""
+                            append("• ${model.id}: ${model.name} (${model.fileSizeMB}MB)$status\n")
+                        }
+                        append("\nUse /select-model <model-id> to select a model.")
+                    }
+                }
+                
+                val msg = com.bitchat.android.model.BitchatMessage(
+                    sender = "system",
+                    content = modelList,
+                    timestamp = java.util.Date(),
+                    isRelay = false
+                )
+                messageManager.addMessage(msg)
+            } catch (e: Exception) {
+                val errorMsg = com.bitchat.android.model.BitchatMessage(
+                    sender = "system",
+                    content = "Failed to list models: ${e.message}",
+                    timestamp = java.util.Date(),
+                    isRelay = false
+                )
+                messageManager.addMessage(errorMsg)
+            }
+        }
+    }
+
+    private fun handleSelectModel(parts: List<String>, meshService: BluetoothMeshService) {
+        val (ai, _) = getAI(meshService)
+        
+        if (parts.size < 2) {
+            val msg = com.bitchat.android.model.BitchatMessage(
+                sender = "system",
+                content = "Usage: /select-model <model-id>\nUse /models to see available models.",
+                timestamp = java.util.Date(),
+                isRelay = false
+            )
+            messageManager.addMessage(msg)
+            return
+        }
+        
+        val modelId = parts[1]
+        val model = com.bitchat.android.ai.ModelCatalog.getModelById(modelId)
+        
+        if (model == null) {
+            val msg = com.bitchat.android.model.BitchatMessage(
+                sender = "system",
+                content = "Model not found: $modelId. Use /models to see available models.",
+                timestamp = java.util.Date(),
+                isRelay = false
+            )
+            messageManager.addMessage(msg)
+            return
+        }
+        
+        runBlocking {
+            try {
+                // Check if model is downloaded
+                if (!ai.modelManager.isModelDownloaded(model)) {
+                    val msg = com.bitchat.android.model.BitchatMessage(
+                        sender = "system",
+                        content = "Model '${model.name}' not downloaded. Use /download $modelId to download it first.",
+                        timestamp = java.util.Date(),
+                        isRelay = false
+                    )
+                    messageManager.addMessage(msg)
+                    return@runBlocking
+                }
+                
+                // Set as selected model
+                ai.preferences.selectedLLMModel = modelId
+                
+                // If AI is enabled, try to load the new model
+                if (ai.preferences.aiEnabled) {
+                    val loadResult = ai.aiService.loadModel(model)
+                    if (loadResult.isSuccess) {
+                        val msg = com.bitchat.android.model.BitchatMessage(
+                            sender = "system",
+                            content = "✅ Model '${model.name}' selected and loaded successfully!",
+                            timestamp = java.util.Date(),
+                            isRelay = false
+                        )
+                        messageManager.addMessage(msg)
+                    } else {
+                        val error = loadResult.exceptionOrNull()?.message ?: "Unknown error"
+                        val msg = com.bitchat.android.model.BitchatMessage(
+                            sender = "system",
+                            content = "Model '${model.name}' selected but failed to load: $error",
+                            timestamp = java.util.Date(),
+                            isRelay = false
+                        )
+                        messageManager.addMessage(msg)
+                    }
+                } else {
+                    val msg = com.bitchat.android.model.BitchatMessage(
+                        sender = "system",
+                        content = "Model '${model.name}' selected. Use '/ai on' to enable AI and load the model.",
+                        timestamp = java.util.Date(),
+                        isRelay = false
+                    )
+                    messageManager.addMessage(msg)
+                }
+            } catch (e: Exception) {
+                val errorMsg = com.bitchat.android.model.BitchatMessage(
+                    sender = "system",
+                    content = "Failed to select model: ${e.message}",
+                    timestamp = java.util.Date(),
+                    isRelay = false
+                )
+                messageManager.addMessage(errorMsg)
+            }
+        }
+    }
+
+    private fun handleModelStatus(meshService: BluetoothMeshService) {
+        val (ai, _) = getAI(meshService)
+        
+        runBlocking {
+            try {
+                val status = ai.getModelSelectionStatus()
+                val msg = com.bitchat.android.model.BitchatMessage(
+                    sender = "system",
+                    content = status,
+                    timestamp = java.util.Date(),
+                    isRelay = false
+                )
+                messageManager.addMessage(msg)
+            } catch (e: Exception) {
+                val errorMsg = com.bitchat.android.model.BitchatMessage(
+                    sender = "system",
+                    content = "Failed to get model status: ${e.message}",
+                    timestamp = java.util.Date(),
+                    isRelay = false
+                )
+                messageManager.addMessage(errorMsg)
+            }
+        }
+    }
+
+    private fun handleRecover(meshService: BluetoothMeshService) {
+        val (ai, _) = getAI(meshService)
+        
+        runBlocking {
+            try {
+                val msg = com.bitchat.android.model.BitchatMessage(
+                    sender = "system",
+                    content = "Attempting AI crash recovery...",
+                    timestamp = java.util.Date(),
+                    isRelay = false
+                )
+                messageManager.addMessage(msg)
+                
+                val result = ai.recoverFromCrash()
+                if (result.isSuccess) {
+                    val successMsg = com.bitchat.android.model.BitchatMessage(
+                        sender = "system",
+                        content = "✅ AI crash recovery completed successfully! You can now try enabling AI again with '/ai on'.",
+                        timestamp = java.util.Date(),
+                        isRelay = false
+                    )
+                    messageManager.addMessage(successMsg)
+                } else {
+                    val error = result.exceptionOrNull()?.message ?: "Unknown error"
+                    val errorMsg = com.bitchat.android.model.BitchatMessage(
+                        sender = "system",
+                        content = "❌ AI crash recovery failed: $error",
+                        timestamp = java.util.Date(),
+                        isRelay = false
+                    )
+                    messageManager.addMessage(errorMsg)
+                }
+            } catch (e: Exception) {
+                val errorMsg = com.bitchat.android.model.BitchatMessage(
+                    sender = "system",
+                    content = "❌ Recovery command failed: ${e.message}",
+                    timestamp = java.util.Date(),
+                    isRelay = false
+                )
+                messageManager.addMessage(errorMsg)
+            }
+        }
+    }
+
+    private fun handleDownload(parts: List<String>, meshService: BluetoothMeshService) {
+        val (ai, _) = getAI(meshService)
+        
+        if (parts.size < 2) {
+            // Show available models
+            val availableModels = com.bitchat.android.ai.ModelCatalog.LLM_MODELS
+            val modelList = availableModels.joinToString("\n") { 
+                "- ${it.id}: ${it.name} (${it.fileSizeMB}MB)"
+            }
+            val msg = com.bitchat.android.model.BitchatMessage(
+                sender = "system",
+                content = "Available models to download:\n$modelList\n\nUsage: /download <model-id>",
+                timestamp = java.util.Date(),
+                isRelay = false
+            )
+            messageManager.addMessage(msg)
+            return
+        }
+        
+        val modelId = parts[1]
+        val model = com.bitchat.android.ai.ModelCatalog.getModelById(modelId)
+        
+        if (model == null) {
+            val msg = com.bitchat.android.model.BitchatMessage(
+                sender = "system",
+                content = "Model not found: $modelId. Use /download to see available models.",
+                timestamp = java.util.Date(),
+                isRelay = false
+            )
+            messageManager.addMessage(msg)
+            return
+        }
+        
+        // Check if already downloaded
+        if (ai.modelManager.isModelDownloaded(model)) {
+            val msg = com.bitchat.android.model.BitchatMessage(
+                sender = "system",
+                content = "Model '${model.name}' is already downloaded.",
+                timestamp = java.util.Date(),
+                isRelay = false
+            )
+            messageManager.addMessage(msg)
+            return
+        }
+        
+        // Start download
+        val startMsg = com.bitchat.android.model.BitchatMessage(
+            sender = "system",
+            content = "Starting download of '${model.name}' (${model.fileSizeMB}MB)...",
+            timestamp = java.util.Date(),
+            isRelay = false
+        )
+        messageManager.addMessage(startMsg)
+        
+        runBlocking {
+            try {
+                val result = ai.modelManager.downloadModel(model) { progress, downloadedMB, totalMB ->
+                    // Update progress (could be enhanced with real-time updates)
+                    android.util.Log.d("Download", "Progress: $progress% ($downloadedMB/$totalMB MB)")
+                }
+                
+                if (result.isSuccess) {
+                    val successMsg = com.bitchat.android.model.BitchatMessage(
+                        sender = "system",
+                        content = "✅ Model '${model.name}' downloaded successfully!",
+                        timestamp = java.util.Date(),
+                        isRelay = false
+                    )
+                    messageManager.addMessage(successMsg)
+                } else {
+                    val errorMsg = com.bitchat.android.model.BitchatMessage(
+                        sender = "system",
+                        content = "❌ Download failed: ${result.exceptionOrNull()?.message}",
+                        timestamp = java.util.Date(),
+                        isRelay = false
+                    )
+                    messageManager.addMessage(errorMsg)
+                }
+            } catch (e: Exception) {
+                val errorMsg = com.bitchat.android.model.BitchatMessage(
+                    sender = "system",
+                    content = "❌ Download error: ${e.message}",
+                    timestamp = java.util.Date(),
+                    isRelay = false
+                )
+                messageManager.addMessage(errorMsg)
+            }
+        }
+    }
     
     private fun handleUnknownCommand(cmd: String) {
         val systemMessage = BitchatMessage(
@@ -365,6 +1156,119 @@ class CommandProcessor(
             isRelay = false
         )
         messageManager.addMessage(systemMessage)
+    }
+    
+    // ===== RESCUE API TEST COMMANDS =====
+    
+    private fun handleTestRescueAPI(meshService: BluetoothMeshService) {
+        val (ai, _) = getAI(meshService)
+        val debugger = com.bitchat.android.ai.RescueAPIDebugger.getInstance(meshService.getContext())
+        val rescueAPI = com.bitchat.android.ai.RescueAPIService.getInstance(meshService.getContext())
+        
+        val msg = com.bitchat.android.model.BitchatMessage(
+            sender = "system",
+            content = "🧪 Testing Rescue API connection... Check logs for results.",
+            timestamp = java.util.Date(),
+            isRelay = false
+        )
+        messageManager.addMessage(msg)
+        
+        debugger.testRescueAPIConnection(rescueAPI)
+    }
+    
+    private fun handleTestRescueSubmit(meshService: BluetoothMeshService) {
+        val (ai, _) = getAI(meshService)
+        val debugger = com.bitchat.android.ai.RescueAPIDebugger.getInstance(meshService.getContext())
+        val rescueAPI = com.bitchat.android.ai.RescueAPIService.getInstance(meshService.getContext())
+        
+        val msg = com.bitchat.android.model.BitchatMessage(
+            sender = "system",
+            content = "🧪 Testing victim report submission... Check logs for results.",
+            timestamp = java.util.Date(),
+            isRelay = false
+        )
+        messageManager.addMessage(msg)
+        
+        debugger.testVictimReportSubmission(rescueAPI)
+    }
+    
+    private fun handleTestTTS(parts: List<String>, meshService: BluetoothMeshService) {
+        val (ai, _) = getAI(meshService)
+        val debugger = com.bitchat.android.ai.RescueAPIDebugger.getInstance(meshService.getContext())
+        val text = parts.drop(1).joinToString(" ").trim().ifEmpty { 
+            "This is a text to speech test. SafeGuardian emergency system activated." 
+        }
+        
+        val msg = com.bitchat.android.model.BitchatMessage(
+            sender = "system",
+            content = "🔊 Testing TTS with text: \"$text\"... Listen for audio output.",
+            timestamp = java.util.Date(),
+            isRelay = false
+        )
+        messageManager.addMessage(msg)
+        
+        debugger.testTTSPlayback(ai.aiService, text)
+    }
+    
+    private fun handleTestBackendSwitch(meshService: BluetoothMeshService) {
+        val debugger = com.bitchat.android.ai.RescueAPIDebugger.getInstance(meshService.getContext())
+        val rescueAPI = com.bitchat.android.ai.RescueAPIService.getInstance(meshService.getContext())
+        
+        val msg = com.bitchat.android.model.BitchatMessage(
+            sender = "system",
+            content = "🔄 Testing backend switching (MongoDB ↔ Firebase)... Check logs for results.",
+            timestamp = java.util.Date(),
+            isRelay = false
+        )
+        messageManager.addMessage(msg)
+        
+        debugger.testBackendSwitching(rescueAPI)
+    }
+    
+    private fun handleTestDiagnostics(meshService: BluetoothMeshService) {
+        val (ai, _) = getAI(meshService)
+        val debugger = com.bitchat.android.ai.RescueAPIDebugger.getInstance(meshService.getContext())
+        val rescueAPI = com.bitchat.android.ai.RescueAPIService.getInstance(meshService.getContext())
+        
+        val msg = com.bitchat.android.model.BitchatMessage(
+            sender = "system",
+            content = "📊 Running full system diagnostics... Check logs for detailed results.",
+            timestamp = java.util.Date(),
+            isRelay = false
+        )
+        messageManager.addMessage(msg)
+        
+        debugger.runFullDiagnostics(rescueAPI, ai.aiService, ai.preferences)
+    }
+    
+    private fun handleShowDebugLogs() {
+        val debugger = com.bitchat.android.ai.RescueAPIDebugger.getInstance(android.app.Application().applicationContext)
+        val logs = debugger.getLogsAsString()
+        
+        val msg = com.bitchat.android.model.BitchatMessage(
+            sender = "system",
+            content = if (logs.isEmpty()) {
+                "📋 No debug logs available."
+            } else {
+                "📋 Debug Logs:\n\n$logs"
+            },
+            timestamp = java.util.Date(),
+            isRelay = false
+        )
+        messageManager.addMessage(msg)
+    }
+    
+    private fun handleClearDebugLogs() {
+        val debugger = com.bitchat.android.ai.RescueAPIDebugger.getInstance(android.app.Application().applicationContext)
+        debugger.clearLogs()
+        
+        val msg = com.bitchat.android.model.BitchatMessage(
+            sender = "system",
+            content = "🗑️ Debug logs cleared.",
+            timestamp = java.util.Date(),
+            isRelay = false
+        )
+        messageManager.addMessage(msg)
     }
     
     // MARK: - Command Autocomplete
