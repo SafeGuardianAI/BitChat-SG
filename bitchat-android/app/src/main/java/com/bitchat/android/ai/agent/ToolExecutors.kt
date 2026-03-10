@@ -370,7 +370,7 @@ class ToolExecutors(private val context: Context) {
         // Storage info
         val statFs = StatFs(Environment.getDataDirectory().path)
         val availableBytes = statFs.availableBlocksLong * statFs.blockSizeLong
-        val totalBytes = statFs.totalBlocksLong * statFs.blockSizeLong
+        val totalBytes = statFs.blockCountLong * statFs.blockSizeLong
         val usedPercent = ((totalBytes - availableBytes) * 100) / totalBytes
 
         val powerMode = agentPrefs.getString("power_mode", "balanced") ?: "balanced"
