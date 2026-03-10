@@ -1,4 +1,7 @@
-git ad# AI Model files - should not be committed to git
+# Debug logs
+debug.log
+
+# AI Model files - should not be committed to git
 *.gguf
 *.bin
 *.safetensors
