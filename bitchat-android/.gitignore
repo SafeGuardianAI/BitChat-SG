@@ -1,0 +1,63 @@
+# Android Studio / IntelliJ
+.idea/
+*.iml
+build/
+!*/build/filtered-manifest/
+!*/build/generated/
+!*/build/intermediates/
+local.properties
+.gradle/
+captures/
+.externalNativeBuild/
+debug_keystore/
+*.keystore
+debug.keystore
+
+# Gradle
+/build/
+/.gradle/
+/captures/
+*.apk
+*.aab
+*.ap_
+*.dex
+
+# Mac
+.DS_Store
+*.swp
+*~
+
+# Maven
+target/
+pom.xml.tag
+pom.xml.releaseBackup
+pom.xml.versionsBackup
+pom.xml.next
+release.properties
+dependency-reduced-pom.xml
+
+# Linters
+.lint/
+
+# Other
+*.log
+.cxx/
+*build/
+out/
+gen/
+*~
+*.swp
+*.lock
+.goosehints
+
+# Google services
+google-services.json
+
+# Keystore files
+*.jks
+*.keystore
+
+# AI Model files (too large for git)
+app/src/main/assets/models/*.gguf
+app/src/main/assets/models/*.bin
+app/src/main/assets/models/*.safetensors

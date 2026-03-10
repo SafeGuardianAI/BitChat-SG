@@ -10,7 +10,7 @@ debug.log
 *.onnx
 *.h5
 *.pb
-
+*.pdf
 # Model directories
 models/
 ai_models/
