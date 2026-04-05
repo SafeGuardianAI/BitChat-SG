@@ -9,6 +9,7 @@ import java.io.DataOutputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.ConcurrentHashMap
+import androidx.core.content.ContextCompat
 import com.bitchat.android.telemetry.sensors.*
 
 /**
@@ -89,10 +90,11 @@ abstract class BaseSensor(
     override var lastUpdate: Long = 0
     override var lastRead: Long = 0
     
-    protected var telemeter: Telemeter? = null
+    private var _telemeter: Telemeter? = null
+    protected val telemeter: Telemeter? get() = _telemeter
     
     fun setTelemeter(telemeter: Telemeter) {
-        this.telemeter = telemeter
+        this._telemeter = telemeter
     }
     
     override fun getData(): Any? {
@@ -145,6 +147,38 @@ class Telemeter(
     
     companion object {
         private const val TAG = "Telemeter"
+        
+        fun fromPacked(context: Context, packed: ByteArray): Telemeter? {
+            return try {
+                val telemeter = Telemeter(context, fromPacked = true)
+                val dis = java.io.DataInputStream(packed.inputStream())
+                val count = dis.readInt()
+                
+                for (i in 0 until count) {
+                    val sid = dis.readInt()
+                    val dataSize = dis.readInt()
+                    val data = ByteArray(dataSize)
+                    dis.readFully(data)
+                    
+                    val name = telemeter.getName(sid)
+                    if (name != null && name in telemeter.sensorRegistry) {
+                        val sensor = telemeter.sensorRegistry[name]!!()
+                        if (sensor is BaseSensor) {
+                            sensor.setTelemeter(telemeter)
+                        }
+                        sensor.synthesized = true
+                        sensor.active = true
+                        sensor.unpack(data)
+                        telemeter.sensorMap[name] = sensor
+                    }
+                }
+                
+                telemeter
+            } catch (e: Exception) {
+                Log.e(TAG, "Error unpacking telemetry", e)
+                null
+            }
+        }
     }
     
     private val sensorMap = ConcurrentHashMap<String, TelemetrySensor>()
@@ -234,7 +268,7 @@ class Telemeter(
     }
     
     fun synthesize(sensor: String) {
-        if (sensor in sensorRegistry && sensor !in sensorMap) {
+        if (sensor in sensorRegistry && !sensorMap.containsKey(sensor)) {
             val sensorInstance = sensorRegistry[sensor]!!()
             if (sensorInstance is BaseSensor) {
                 sensorInstance.setTelemeter(this)
@@ -249,7 +283,7 @@ class Telemeter(
         if (fromPacked) return
         
         if (sensor in sensorRegistry) {
-            if (sensor !in sensorMap) {
+            if (!sensorMap.containsKey(sensor)) {
                 val sensorInstance = sensorRegistry[sensor]!!()
                 if (sensorInstance is BaseSensor) {
                     sensorInstance.setTelemeter(this)
@@ -265,7 +299,7 @@ class Telemeter(
     fun disable(sensor: String) {
         if (fromPacked) return
         
-        if (sensor in sensorMap) {
+        if (sensorMap.containsKey(sensor)) {
             val sensorInstance = sensorMap[sensor]!!
             if (sensorInstance.active) {
                 sensorInstance.stop()
@@ -289,7 +323,7 @@ class Telemeter(
         return if (fromPacked) {
             sensorMap[sensor]?.getData()
         } else {
-            if (sensor in sensorMap) {
+            if (sensorMap.containsKey(sensor)) {
                 sensorMap[sensor]!!.getData()
             } else {
                 null
@@ -370,37 +404,4 @@ class Telemeter(
         return output.toByteArray()
     }
     
-    companion object {
-        fun fromPacked(context: Context, packed: ByteArray): Telemeter? {
-            return try {
-                val telemeter = Telemeter(context, fromPacked = true)
-                val dis = DataInputStream(packed.inputStream())
-                val count = dis.readInt()
-                
-                for (i in 0 until count) {
-                    val sid = dis.readInt()
-                    val dataSize = dis.readInt()
-                    val data = ByteArray(dataSize)
-                    dis.readFully(data)
-                    
-                    val name = telemeter.getName(sid)
-                    if (name != null && name in telemeter.sensorRegistry) {
-                        val sensor = telemeter.sensorRegistry[name]!!()
-                        if (sensor is BaseSensor) {
-                            sensor.setTelemeter(telemeter)
-                        }
-                        sensor.synthesized = true
-                        sensor.active = true
-                        sensor.unpack(data)
-                        telemeter.sensorMap[name] = sensor
-                    }
-                }
-                
-                telemeter
-            } catch (e: Exception) {
-                Log.e(TAG, "Error unpacking telemetry", e)
-                null
-            }
-        }
-    }
 }

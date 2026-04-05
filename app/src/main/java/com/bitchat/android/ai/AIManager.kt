@@ -1,4 +1,4 @@
-﻿package com.bitchat.android.ai
+package com.bitchat.android.ai
 
 import android.content.Context
 import android.util.Log
@@ -29,7 +29,7 @@ class AIManager(private val context: Context) {
     val modelManager = ModelManager(context)
     val conversationContext = ConversationContext(context)
     
-    private val rerankerService = RerankerService(context)
+    private val rerankerService = RerankerService(context, preferences)
     private val ragService = RAGService(context, preferences, rerankerService)
     private val documentManager = RAGDocumentManager(context)
     
@@ -51,7 +51,16 @@ class AIManager(private val context: Context) {
     
     fun isRAGReady(): Boolean = ragService.isReady()
     
-    fun isRerankerReady(): Boolean = rerankerService.isInitialized()
+    fun isRerankerReady(): Boolean = rerankerService.isReady()
+    
+    fun getStatus(): AIStatus = AIStatus(
+        isReady = isAIReady(),
+        modelLoaded = aiService.isModelLoaded(),
+        modelName = preferences.getSelectedLLMModel()?.name,
+        ragReady = isRAGReady(),
+        asrReady = false,
+        ttsEnabled = preferences.ttsEnabled
+    )
     
     fun getRAGService(): RAGService = ragService
     

@@ -258,7 +258,7 @@ class AIChatService(
     suspend fun searchHistory(
         query: String,
         channelId: String? = null
-    ): List<com.nexa.sdk.bean.ChatMessage> = withContext(Dispatchers.IO) {
+    ): List<ConversationContext.Message> = withContext(Dispatchers.IO) {
         
         if (!aiManager.preferences.ragEnabled) {
             Log.w(TAG, "RAG is disabled, cannot search history")
@@ -266,10 +266,8 @@ class AIChatService(
         }
 
         try {
-            // Get all messages for the channel
             val allMessages = aiManager.conversationContext.getRecentMessages(channelId, 100)
             
-            // Simple text search for now (could be enhanced with semantic search)
             return@withContext allMessages.filter { message ->
                 message.content.contains(query, ignoreCase = true)
             }
@@ -302,7 +300,7 @@ class AIChatService(
                 return@withContext "No messages to summarize."
             }
 
-            val conversationText = recentMessages.joinToString("\n") { "${it.role}: ${it.content}" }
+            val conversationText = recentMessages.joinToString("\n") { msg -> "${msg.role}: ${msg.content}" }
             val summaryPrompt = "Please summarize the following conversation in 2-3 sentences:\n\n$conversationText"
 
             var summary = ""
@@ -521,7 +519,7 @@ class AIChatService(
     private fun getConversationContext(channelId: String?): String {
         return try {
             val recentMessages = aiManager.conversationContext.getRecentMessages(channelId, 5)
-            recentMessages.joinToString("\n") { "${it.role}: ${it.content}" }
+            recentMessages.joinToString("\n") { msg -> "${msg.role}: ${msg.content}" }
         } catch (e: Exception) {
             Log.w(TAG, "Failed to get conversation context", e)
             ""

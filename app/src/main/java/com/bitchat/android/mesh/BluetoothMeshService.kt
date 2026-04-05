@@ -1,4 +1,4 @@
-﻿package com.bitchat.android.mesh
+package com.bitchat.android.mesh
 
 import android.content.Context
 import android.util.Log
@@ -115,6 +115,9 @@ class BluetoothMeshService(private val context: Context) {
         peerManager.delegate = object : PeerManagerDelegate {
             override fun onPeerListUpdated(peerIDs: List<String>) {
                 delegate?.didUpdatePeerList(peerIDs)
+            }
+            override fun onPeerRemoved(peerID: String) {
+                delegate?.didUpdatePeerList(peerManager.getActivePeerIDs())
             }
         }
         
@@ -411,9 +414,9 @@ class BluetoothMeshService(private val context: Context) {
             override fun relayPacket(routed: RoutedPacket) {
                 connectionManager.broadcastPacket(routed)
             }
-
-            override fun sendToPeer(peerID: String, routed: RoutedPacket): Boolean {
-                return connectionManager.sendToPeer(peerID, routed)
+            
+            override fun handleRequestSync(routed: RoutedPacket) {
+                // Stub: request sync handling
             }
         }
         
@@ -693,22 +696,20 @@ class BluetoothMeshService(private val context: Context) {
                 return@launch
             }
             
-            // Create iOS-compatible IdentityAnnouncement with TLV encoding
             val announcement = IdentityAnnouncement(nickname, staticKey, signingKey)
-            var tlvPayload = announcement.encode()
-            if (tlvPayload == null) {
+            val encodedPayload = announcement.encode()
+            if (encodedPayload == null) {
                 Log.e(TAG, "Failed to encode announcement as TLV")
                 return@launch
             }
+            var tlvPayload: ByteArray = encodedPayload
 
-            // Append gossip TLV containing up to 10 direct neighbors (compact IDs)
             try {
                 val directPeers = getDirectPeerIDsForGossip()
                 if (directPeers.isNotEmpty()) {
                     val gossip = com.bitchat.android.services.meshgraph.GossipTLV.encodeNeighbors(directPeers)
                     tlvPayload = tlvPayload + gossip
                 }
-                // Always update our own node in the mesh graph with the neighbor list we used
                 try {
                     com.bitchat.android.services.meshgraph.MeshGraphService.getInstance()
                         .updateFromAnnouncement(myPeerID, nickname, directPeers, System.currentTimeMillis().toULong())
@@ -722,7 +723,6 @@ class BluetoothMeshService(private val context: Context) {
                 payload = tlvPayload
             )
             
-            // Sign the packet using our signing key (exactly like iOS)
             val signedPacket = encryptionService.signData(announcePacket.toBinaryDataForSigning()!!)?.let { signature ->
                 announcePacket.copy(signature = signature)
             } ?: announcePacket
@@ -754,22 +754,20 @@ class BluetoothMeshService(private val context: Context) {
             return
         }
         
-        // Create iOS-compatible IdentityAnnouncement with TLV encoding
         val announcement = IdentityAnnouncement(nickname, staticKey, signingKey)
-        var tlvPayload = announcement.encode()
-        if (tlvPayload == null) {
+        val encodedPayload = announcement.encode()
+        if (encodedPayload == null) {
             Log.e(TAG, "Failed to encode peer announcement as TLV")
             return
         }
+        var tlvPayload: ByteArray = encodedPayload
 
-        // Append gossip TLV containing up to 10 direct neighbors (compact IDs)
         try {
             val directPeers = getDirectPeerIDsForGossip()
             if (directPeers.isNotEmpty()) {
                 val gossip = com.bitchat.android.services.meshgraph.GossipTLV.encodeNeighbors(directPeers)
                 tlvPayload = tlvPayload + gossip
             }
-            // Always update our own node in the mesh graph with the neighbor list we used
             try {
                 com.bitchat.android.services.meshgraph.MeshGraphService.getInstance()
                     .updateFromAnnouncement(myPeerID, nickname, directPeers, System.currentTimeMillis().toULong())
@@ -783,7 +781,6 @@ class BluetoothMeshService(private val context: Context) {
             payload = tlvPayload
         )
         
-        // Sign the packet using our signing key (exactly like iOS)
         val signedPacket = encryptionService.signData(packet.toBinaryDataForSigning()!!)?.let { signature ->
             packet.copy(signature = signature)
         } ?: packet
@@ -988,37 +985,19 @@ class BluetoothMeshService(private val context: Context) {
      */
     private fun signPacketBeforeBroadcast(packet: BitchatPacket): BitchatPacket {
         return try {
-            // Optionally compute and attach a source route for addressed packets
-            val withRoute = try {
-                val rec = packet.recipientID
-                if (rec != null && !rec.contentEquals(SpecialRecipients.BROADCAST)) {
-                    val dest = rec.joinToString("") { b -> "%02x".format(b) }
-                    val path = com.bitchat.android.services.meshgraph.RoutePlanner.shortestPath(myPeerID, dest)
-                    if (path != null && path.size >= 3) {
-                        // Exclude first (sender) and last (recipient); only intermediates
-                        val intermediates = path.subList(1, path.size - 1)
-                        val hopsBytes = intermediates.map { hexStringToByteArray(it) }
-                        Log.d(TAG, "âœ… Signed packet type ${packet.type} (route ${hopsBytes.size} hops: $intermediates)")
-                        packet.copy(route = hopsBytes)
-                    } else packet.copy(route = null)
-                } else packet
-            } catch (_: Exception) { packet }
-
-            // Get the canonical packet data for signing (without signature)
-            val packetDataForSigning = withRoute.toBinaryDataForSigning()
+            val packetDataForSigning = packet.toBinaryDataForSigning()
             if (packetDataForSigning == null) {
                 Log.w(TAG, "Failed to encode packet type ${packet.type} for signing, sending unsigned")
-                return withRoute
+                return packet
             }
             
-            // Sign the packet data using our signing key
             val signature = encryptionService.signData(packetDataForSigning)
             if (signature != null) {
-                Log.d(TAG, "âœ… Signed packet type ${packet.type} (signature ${signature.size} bytes)")
-                withRoute.copy(signature = signature)
+                Log.d(TAG, "Signed packet type ${packet.type} (signature ${signature.size} bytes)")
+                packet.copy(signature = signature)
             } else {
                 Log.w(TAG, "Failed to sign packet type ${packet.type}, sending unsigned")
-                withRoute
+                packet
             }
         } catch (e: Exception) {
             Log.w(TAG, "Error signing packet type ${packet.type}: ${e.message}, sending unsigned")

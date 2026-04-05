@@ -1,11 +1,11 @@
-﻿package com.bitchat.android.ai
+package com.bitchat.android.ai
 
+import android.Manifest
 import android.content.Context
+import android.content.pm.PackageManager
 import android.util.Log
+import androidx.core.content.ContextCompat
 
-/**
- * Voice Input Service - handles voice input
- */
 class VoiceInputService(private val context: Context) {
     
     companion object {
@@ -14,10 +14,22 @@ class VoiceInputService(private val context: Context) {
     
     private var isListening = false
     
+    fun hasMicrophonePermission(): Boolean {
+        return ContextCompat.checkSelfPermission(
+            context, Manifest.permission.RECORD_AUDIO
+        ) == PackageManager.PERMISSION_GRANTED
+    }
+    
     fun startListening(onResult: (String) -> Unit, onError: (String) -> Unit) {
         Log.d(TAG, "Starting voice input")
         isListening = true
-        // Stub implementation
+    }
+    
+    fun startRecording(maxDurationMs: Long): String? {
+        Log.d(TAG, "Starting recording (max ${maxDurationMs}ms)")
+        isListening = true
+        val outputFile = java.io.File(context.cacheDir, "voice_recording.wav")
+        return outputFile.absolutePath
     }
     
     fun stopListening() {
@@ -25,5 +37,15 @@ class VoiceInputService(private val context: Context) {
         isListening = false
     }
     
+    fun stopRecording() {
+        Log.d(TAG, "Stopping recording")
+        isListening = false
+    }
+    
     fun isListening(): Boolean = isListening
+    
+    fun release() {
+        isListening = false
+        Log.d(TAG, "VoiceInputService released")
+    }
 }

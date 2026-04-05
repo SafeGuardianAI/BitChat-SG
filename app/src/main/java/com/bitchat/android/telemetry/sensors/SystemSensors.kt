@@ -1,6 +1,9 @@
-package com.bitchat.android.telemetry
+package com.bitchat.android.telemetry.sensors
 
 import android.util.Log
+import com.bitchat.android.telemetry.BaseSensor
+import com.bitchat.android.telemetry.SensorID
+import com.bitchat.android.telemetry.Telemeter
 import java.io.ByteArrayOutputStream
 import java.io.DataInputStream
 import java.io.DataOutputStream

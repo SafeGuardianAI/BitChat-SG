@@ -95,8 +95,8 @@ class CommandProcessor(
             "/test-tts" -> handleTestTTS(parts, meshService)
             "/test-backend-switch" -> handleTestBackendSwitch(meshService)
             "/test-diagnostics" -> handleTestDiagnostics(meshService)
-            "/debug-logs" -> handleShowDebugLogs()
-            "/debug-clear" -> handleClearDebugLogs()
+            "/debug-logs" -> handleShowDebugLogs(meshService)
+            "/debug-clear" -> handleClearDebugLogs(meshService)
             else -> handleUnknownCommand(cmd)
         }
         
@@ -721,17 +721,11 @@ class CommandProcessor(
                         (tokenCount * 1000f) / (endTime - startTime)
                     } else 0f
                     
-                    // Create final message with statistics
                     val msg = com.bitchat.android.model.BitchatMessage(
                         sender = "ai",
                         content = fullAnswer,
                         timestamp = java.util.Date(),
-                        isRelay = false,
-                        isAIGenerated = true,
-                        aiTokenCount = tokenCount,
-                        aiGenerationTimeMs = endTime - startTime,
-                        aiTokensPerSecond = tokensPerSecond,
-                        aiProcessingUnit = "CPU" // TODO: Detect actual processing unit
+                        isRelay = false
                     )
                     messageManager.addMessage(msg)
                 } catch (e: Exception) {
@@ -771,7 +765,7 @@ class CommandProcessor(
             messageManager.addMessage(msg)
             return
         }
-        ai.aiService.speak(text)
+        runBlocking { ai.aiService.speak(text) }
     }
 
     private fun handleVoiceMode(meshService: BluetoothMeshService) {
@@ -1161,7 +1155,6 @@ class CommandProcessor(
     // ===== RESCUE API TEST COMMANDS =====
     
     private fun handleTestRescueAPI(meshService: BluetoothMeshService) {
-        val (ai, _) = getAI(meshService)
         val debugger = com.bitchat.android.ai.RescueAPIDebugger.getInstance(meshService.getContext())
         val rescueAPI = com.bitchat.android.ai.RescueAPIService.getInstance(meshService.getContext())
         
@@ -1173,11 +1166,10 @@ class CommandProcessor(
         )
         messageManager.addMessage(msg)
         
-        debugger.testRescueAPIConnection(rescueAPI)
+        runBlocking { debugger.testAPIConnection(rescueAPI) }
     }
     
     private fun handleTestRescueSubmit(meshService: BluetoothMeshService) {
-        val (ai, _) = getAI(meshService)
         val debugger = com.bitchat.android.ai.RescueAPIDebugger.getInstance(meshService.getContext())
         val rescueAPI = com.bitchat.android.ai.RescueAPIService.getInstance(meshService.getContext())
         
@@ -1189,7 +1181,7 @@ class CommandProcessor(
         )
         messageManager.addMessage(msg)
         
-        debugger.testVictimReportSubmission(rescueAPI)
+        runBlocking { debugger.testVictimSubmission(rescueAPI) }
     }
     
     private fun handleTestTTS(parts: List<String>, meshService: BluetoothMeshService) {
@@ -1211,18 +1203,13 @@ class CommandProcessor(
     }
     
     private fun handleTestBackendSwitch(meshService: BluetoothMeshService) {
-        val debugger = com.bitchat.android.ai.RescueAPIDebugger.getInstance(meshService.getContext())
-        val rescueAPI = com.bitchat.android.ai.RescueAPIService.getInstance(meshService.getContext())
-        
         val msg = com.bitchat.android.model.BitchatMessage(
             sender = "system",
-            content = "🔄 Testing backend switching (MongoDB ↔ Firebase)... Check logs for results.",
+            content = "🔄 Backend switching test not yet implemented.",
             timestamp = java.util.Date(),
             isRelay = false
         )
         messageManager.addMessage(msg)
-        
-        debugger.testBackendSwitching(rescueAPI)
     }
     
     private fun handleTestDiagnostics(meshService: BluetoothMeshService) {
@@ -1238,19 +1225,19 @@ class CommandProcessor(
         )
         messageManager.addMessage(msg)
         
-        debugger.runFullDiagnostics(rescueAPI, ai.aiService, ai.preferences)
+        runBlocking { debugger.runFullDiagnostics(rescueAPI, ai.aiService, ai.preferences) }
     }
     
-    private fun handleShowDebugLogs() {
-        val debugger = com.bitchat.android.ai.RescueAPIDebugger.getInstance(android.app.Application().applicationContext)
-        val logs = debugger.getLogsAsString()
+    private fun handleShowDebugLogs(meshService: BluetoothMeshService) {
+        val debugger = com.bitchat.android.ai.RescueAPIDebugger.getInstance(meshService.getContext())
+        val logs = debugger.getResults()
         
         val msg = com.bitchat.android.model.BitchatMessage(
             sender = "system",
             content = if (logs.isEmpty()) {
                 "📋 No debug logs available."
             } else {
-                "📋 Debug Logs:\n\n$logs"
+                "📋 Debug Logs:\n\n${logs.joinToString("\n")}"
             },
             timestamp = java.util.Date(),
             isRelay = false
@@ -1258,9 +1245,9 @@ class CommandProcessor(
         messageManager.addMessage(msg)
     }
     
-    private fun handleClearDebugLogs() {
-        val debugger = com.bitchat.android.ai.RescueAPIDebugger.getInstance(android.app.Application().applicationContext)
-        debugger.clearLogs()
+    private fun handleClearDebugLogs(meshService: BluetoothMeshService) {
+        val debugger = com.bitchat.android.ai.RescueAPIDebugger.getInstance(meshService.getContext())
+        debugger.clearResults()
         
         val msg = com.bitchat.android.model.BitchatMessage(
             sender = "system",

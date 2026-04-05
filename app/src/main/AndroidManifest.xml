@@ -61,6 +61,12 @@
                 android:resource="@xml/file_paths" />
         </provider>
         <activity
+            android:name=".ui.connectivity.ConnectivityTestActivity"
+            android:exported="false"
+            android:theme="@style/Theme.BitchatAndroid"
+            android:screenOrientation="portrait"
+            android:windowSoftInputMode="adjustResize" />
+        <activity
             android:name=".ui.GeohashPickerActivity"
             android:exported="false"
             android:theme="@style/Theme.BitchatAndroid"

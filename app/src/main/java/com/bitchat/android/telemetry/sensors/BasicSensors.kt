@@ -1,6 +1,9 @@
-package com.bitchat.android.telemetry
+package com.bitchat.android.telemetry.sensors
 
 import android.content.Context
+import com.bitchat.android.telemetry.BaseSensor
+import com.bitchat.android.telemetry.SensorID
+import com.bitchat.android.telemetry.Telemeter
 import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener

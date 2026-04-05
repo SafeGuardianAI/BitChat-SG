@@ -1,4 +1,8 @@
-package com.bitchat.android.telemetry
+package com.bitchat.android.telemetry.sensors
+
+import com.bitchat.android.telemetry.BaseSensor
+import com.bitchat.android.telemetry.SensorID
+import com.bitchat.android.telemetry.Telemeter
 
 import android.content.Context
 import android.hardware.Sensor
@@ -13,6 +17,7 @@ import java.io.DataOutputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.atomic.AtomicReference
+import kotlin.math.round
 
 /**
  * Pressure Sensor
@@ -249,9 +254,9 @@ class MagneticFieldSensor(private val context: Context) : BaseSensor(SensorID.MA
     override fun onSensorChanged(event: SensorEvent?) {
         if (event?.sensor?.type == Sensor.TYPE_MAGNETIC_FIELD) {
             magneticFieldData = MagneticFieldData(
-                x = round(event.values[0] * 1e6) / 1e6f,
-                y = round(event.values[1] * 1e6) / 1e6f,
-                z = round(event.values[2] * 1e6) / 1e6f
+                x = round(event.values[0] * 1e6f) / 1e6f,
+                y = round(event.values[1] * 1e6f) / 1e6f,
+                z = round(event.values[2] * 1e6f) / 1e6f
             )
             lastUpdate = System.currentTimeMillis()
         }
@@ -399,9 +404,9 @@ class GravitySensor(private val context: Context) : BaseSensor(SensorID.GRAVITY,
     override fun onSensorChanged(event: SensorEvent?) {
         if (event?.sensor?.type == Sensor.TYPE_GRAVITY) {
             gravityData = GravityData(
-                x = round(event.values[0] * 1e6) / 1e6f,
-                y = round(event.values[1] * 1e6) / 1e6f,
-                z = round(event.values[2] * 1e6) / 1e6f
+                x = round(event.values[0] * 1e6f) / 1e6f,
+                y = round(event.values[1] * 1e6f) / 1e6f,
+                z = round(event.values[2] * 1e6f) / 1e6f
             )
             lastUpdate = System.currentTimeMillis()
         }
@@ -482,9 +487,9 @@ class AngularVelocitySensor(private val context: Context) : BaseSensor(SensorID.
     override fun onSensorChanged(event: SensorEvent?) {
         if (event?.sensor?.type == Sensor.TYPE_GYROSCOPE) {
             angularVelocityData = AngularVelocityData(
-                x = round(event.values[0] * 1e6) / 1e6f,
-                y = round(event.values[1] * 1e6) / 1e6f,
-                z = round(event.values[2] * 1e6) / 1e6f
+                x = round(event.values[0] * 1e6f) / 1e6f,
+                y = round(event.values[1] * 1e6f) / 1e6f,
+                z = round(event.values[2] * 1e6f) / 1e6f
             )
             lastUpdate = System.currentTimeMillis()
         }
@@ -565,9 +570,9 @@ class AccelerationSensor(private val context: Context) : BaseSensor(SensorID.ACC
     override fun onSensorChanged(event: SensorEvent?) {
         if (event?.sensor?.type == Sensor.TYPE_ACCELEROMETER) {
             accelerationData = AccelerationData(
-                x = round(event.values[0] * 1e6) / 1e6f,
-                y = round(event.values[1] * 1e6) / 1e6f,
-                z = round(event.values[2] * 1e6) / 1e6f
+                x = round(event.values[0] * 1e6f) / 1e6f,
+                y = round(event.values[1] * 1e6f) / 1e6f,
+                z = round(event.values[2] * 1e6f) / 1e6f
             )
             lastUpdate = System.currentTimeMillis()
         }

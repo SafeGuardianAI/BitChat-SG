@@ -1,4 +1,4 @@
-﻿package com.bitchat.android.ai
+package com.bitchat.android.ai
 
 import android.content.Context
 import android.content.SharedPreferences
@@ -50,6 +50,17 @@ class AIPreferences(context: Context) {
     
     fun getSelectedLLMModel(): ModelInfo? {
         return ModelCatalog.getModelById(selectedLLMModel)
+    }
+    
+    fun getSelectedRerankerModel(): ModelInfo? {
+        return if (rerankEnabled) {
+            ModelInfo(
+                id = "jina-reranker-v1-tiny",
+                name = "Jina Reranker v1 Tiny",
+                fileSizeMB = 33,
+                description = "Lightweight reranker model"
+            )
+        } else null
     }
     
     companion object {

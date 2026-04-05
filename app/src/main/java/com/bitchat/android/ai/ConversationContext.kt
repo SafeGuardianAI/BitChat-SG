@@ -1,13 +1,8 @@
-﻿package com.bitchat.android.ai
+package com.bitchat.android.ai
 
 import android.content.Context
 import android.util.Log
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 
-/**
- * Conversation Context - manages conversation history for AI
- */
 class ConversationContext(private val context: Context) {
     
     companion object {
@@ -18,7 +13,7 @@ class ConversationContext(private val context: Context) {
     private val conversations = mutableMapOf<String, MutableList<Message>>()
     
     data class Message(
-        val role: String, // "user" or "assistant"
+        val role: String,
         val content: String,
         val timestamp: Long = System.currentTimeMillis()
     )
@@ -41,6 +36,12 @@ class ConversationContext(private val context: Context) {
         val key = channelId ?: "default"
         val messages = conversations[key] ?: return ""
         return messages.takeLast(10).joinToString("\n") { "${it.role}: ${it.content}" }
+    }
+    
+    fun getRecentMessages(channelId: String?, count: Int): List<Message> {
+        val key = channelId ?: "default"
+        val messages = conversations[key] ?: return emptyList()
+        return messages.takeLast(count)
     }
     
     fun clearContext(channelId: String?) {

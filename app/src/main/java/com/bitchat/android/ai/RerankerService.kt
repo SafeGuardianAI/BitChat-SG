@@ -24,7 +24,7 @@ class RerankerService(
     }
 
     private var isInitialized = false
-    private var currentModel: AIModel? = null
+    private var currentModel: ModelInfo? = null
 
     /**
      * Initialize the reranker service
@@ -77,7 +77,7 @@ class RerankerService(
      */
     fun getCurrentModelInfo(): String {
         return if (isInitialized && currentModel != null) {
-            "Reranker: ${currentModel!!.name} (${currentModel!!.parameterCount})"
+            "Reranker: ${currentModel!!.name} (${currentModel!!.description})"
         } else {
             "Reranker: Not initialized"
         }
@@ -219,34 +219,31 @@ class RerankerService(
     /**
      * Check if a model is downloaded and ready
      */
-    fun isModelDownloaded(model: AIModel): Boolean {
-        val modelFile = File(context.filesDir, "models/${model.modelFileName}")
+    fun isModelDownloaded(model: ModelInfo): Boolean {
+        val modelFile = File(context.filesDir, "models/${model.id}.onnx")
         return modelFile.exists() && modelFile.length() > 0
     }
 
-    /**
-     * Get model file path
-     */
-    fun getModelFilePath(model: AIModel): String {
-        return File(context.filesDir, "models/${model.modelFileName}").absolutePath
+    fun getModelFilePath(model: ModelInfo): String {
+        return File(context.filesDir, "models/${model.id}.onnx").absolutePath
     }
 
-    /**
-     * Download reranker model from HuggingFace
-     */
-    private suspend fun downloadModel(model: AIModel): Result<File> = withContext(Dispatchers.IO) {
+    private suspend fun downloadModel(model: ModelInfo): Result<File> = withContext(Dispatchers.IO) {
         try {
             Log.d(TAG, "Downloading reranker model: ${model.name}")
             
             val modelsDir = File(context.filesDir, "models")
             modelsDir.mkdirs()
             
-            val modelFile = File(modelsDir, model.modelFileName)
+            val modelFile = File(modelsDir, "${model.id}.onnx")
             
-            // Check if already downloaded
             if (modelFile.exists() && modelFile.length() > 0) {
                 Log.d(TAG, "Model already exists: ${modelFile.length()} bytes")
                 return@withContext Result.success(modelFile)
+            }
+            
+            if (model.downloadUrl.isEmpty()) {
+                return@withContext Result.failure(Exception("No download URL for model ${model.name}"))
             }
             
             Log.d(TAG, "Downloading from: ${model.downloadUrl}")

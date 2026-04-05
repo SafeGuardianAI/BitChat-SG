@@ -120,12 +120,13 @@ class MessageHandler(private val myPeerID: String) {
                 }
                 
                 com.bitchat.android.model.NoisePayloadType.READ_RECEIPT -> {
-                    // Handle read receipt exactly like iOS
                     val messageID = String(noisePayload.data, Charsets.UTF_8)
                     Log.d(TAG, "👁️ Read receipt received from $peerID for message $messageID")
-                    
-                    // Simplified: Call delegate with messageID and peerID directly
                     delegate?.onReadReceiptReceived(messageID, peerID)
+                }
+                
+                else -> {
+                    Log.d(TAG, "Unhandled NoisePayload type ${noisePayload.type} from $peerID")
                 }
             }
             
