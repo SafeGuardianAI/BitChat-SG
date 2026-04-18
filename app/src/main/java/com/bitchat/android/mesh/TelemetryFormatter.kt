@@ -29,8 +29,8 @@ object TelemetryFormatter {
     private const val SID_CONNECTIVITY = 0x1B
 
     /**
-     * Returns a compact status line, e.g.:
-     *   "📡 🔋 78% · 📍 GPS · 📶 BLE ✓  WiFi ✗"
+     * Returns a compact, plain-text status line, e.g.:
+     *   "battery 78% · GPS ok · radio BLE ok WiFi down"
      * Returns null if the bytes can't be parsed at all.
      */
     fun format(raw: ByteArray): String? {
@@ -135,29 +135,26 @@ object TelemetryFormatter {
         val parts = mutableListOf<String>()
 
         if (battery != null) {
-            val icon = batteryIcon(battery, charging == true)
-            parts += "$icon ${battery.toInt()}%"
+            val label = when {
+                charging == true   -> "charging"
+                battery < 20f      -> "battery low"
+                else               -> "battery"
+            }
+            parts += "$label ${battery.toInt()}%"
         }
 
         if (hasGps != null) {
-            parts += if (hasGps) "📍 GPS" else "📍 no GPS"
+            parts += if (hasGps) "GPS ok" else "GPS none"
         }
 
         val radio = buildList<String> {
-            if (bleOk != null)      add("BLE ${if (bleOk) "✓" else "✗"}")
-            if (wifiOk != null)     add("WiFi ${if (wifiOk) "✓" else "✗"}")
-            if (internetOk != null) add("Net ${if (internetOk) "✓" else "✗"}")
+            if (bleOk != null)      add("BLE ${if (bleOk) "ok" else "down"}")
+            if (wifiOk != null)     add("WiFi ${if (wifiOk) "ok" else "down"}")
+            if (internetOk != null) add("Net ${if (internetOk) "ok" else "down"}")
         }
-        if (radio.isNotEmpty()) parts += "📶 ${radio.joinToString("  ")}"
+        if (radio.isNotEmpty()) parts += "radio ${radio.joinToString(" ")}"
 
-        if (parts.isEmpty()) return "📡 status received"
-        return "📡 ${parts.joinToString(" · ")}"
-    }
-
-    private fun batteryIcon(percent: Float, charging: Boolean): String = when {
-        charging       -> "🔌"
-        percent >= 80f -> "🔋"
-        percent >= 40f -> "🪫"
-        else           -> "🔴"
+        if (parts.isEmpty()) return "status received"
+        return parts.joinToString(" · ")
     }
 }

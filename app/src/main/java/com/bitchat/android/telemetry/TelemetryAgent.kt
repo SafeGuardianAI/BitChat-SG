@@ -187,7 +187,7 @@ class TelemetryAgent private constructor(private val context: Context) {
         // rendered the same way peers see it via MessageHandler.handleAnnounce.
         val packed = try { pack() } catch (_: Exception) { null }
         val line = packed?.let { com.bitchat.android.mesh.TelemetryFormatter.format(it) }
-            ?: "📡 telemetry broadcast (${json.length} chars)"
+            ?: "telemetry broadcast (${json.length} chars)"
         onLocalAlert?.invoke(
             BitchatMessage(
                 sender = "me",
@@ -275,14 +275,14 @@ class TelemetryAgent private constructor(private val context: Context) {
 
     private fun dispatchFallAlert(event: FallEvent) {
         val peakStr = "%.1f".format(event.peakImpactG)
-        val msg = "⚠️ Possible fall detected — peak ${peakStr}g, no movement ${event.stillnessDurationMs / 1000}s"
+        val msg = "ALERT: possible fall detected — peak ${peakStr}g, no movement ${event.stillnessDurationMs / 1000}s"
         Log.w(TAG, "FALL ALERT: $msg")
         broadcastAlert(msg)
     }
 
     private fun dispatchDeadmanAlert(silentMs: Long) {
         val minutes = silentMs / 60000
-        val msg = "⚠️ No movement for ${minutes} min — person may need help"
+        val msg = "ALERT: no movement for $minutes min — person may need help"
         Log.w(TAG, "DEADMAN ALERT: $msg")
         broadcastAlert(msg)
     }
