@@ -9,10 +9,20 @@ import androidx.compose.material.icons.filled.Bluetooth
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Power
+import androidx.compose.material.icons.filled.Alarm
+import androidx.compose.material.icons.filled.CameraAlt
+import androidx.compose.material.icons.filled.Call
+import androidx.compose.material.icons.filled.DoNotDisturb
+import androidx.compose.material.icons.filled.FitnessCenter
+import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.PhoneAndroid
+import androidx.compose.material.icons.filled.PhotoLibrary
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -241,8 +251,18 @@ private fun getPermissionIcon(permissionType: PermissionType): ImageVector {
         PermissionType.NEARBY_DEVICES -> Icons.Filled.Bluetooth
         PermissionType.PRECISE_LOCATION -> Icons.Filled.LocationOn
         PermissionType.MICROPHONE -> Icons.Filled.Mic
+        PermissionType.CAMERA -> Icons.Filled.CameraAlt
+        PermissionType.MEDIA_ACCESS -> Icons.Filled.PhotoLibrary
+        PermissionType.WIFI_CONTROL -> Icons.Filled.Wifi
+        PermissionType.EMERGENCY_COMMS -> Icons.Filled.Call
+        PermissionType.BODY_SENSORS -> Icons.Filled.FitnessCenter
+        PermissionType.SCREEN_ALERTS -> Icons.Filled.Alarm
+        PermissionType.OVERLAY -> Icons.Filled.Layers
+        PermissionType.SYSTEM_SETTINGS -> Icons.Filled.PhoneAndroid
         PermissionType.NOTIFICATIONS -> Icons.Filled.Notifications
         PermissionType.BATTERY_OPTIMIZATION -> Icons.Filled.Power
+        PermissionType.DND_ACCESS -> Icons.Filled.DoNotDisturb
+        PermissionType.BOOT_BACKGROUND -> Icons.Filled.Refresh
         PermissionType.OTHER -> Icons.Filled.Settings
     }
 }

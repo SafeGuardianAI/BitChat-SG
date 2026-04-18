@@ -27,6 +27,9 @@ import com.bitchat.android.onboarding.BluetoothStatusManager
 import com.bitchat.android.onboarding.BatteryOptimizationManager
 import com.bitchat.android.onboarding.BatteryOptimizationPreferenceManager
 import com.bitchat.android.onboarding.BatteryOptimizationScreen
+import com.bitchat.android.onboarding.DndAccessScreen
+import com.bitchat.android.onboarding.ModelSelectionScreen
+import com.bitchat.android.onboarding.SpecialPermissionsScreen
 import com.bitchat.android.onboarding.BatteryOptimizationStatus
 import com.bitchat.android.onboarding.InitializationErrorScreen
 import com.bitchat.android.onboarding.InitializingScreen
@@ -216,6 +219,54 @@ class MainActivity : ComponentActivity() {
                     isLoading = isBatteryOptimizationLoading
                 )
             }
+
+            OnboardingState.SPECIAL_PERMISSIONS_CHECK -> {
+                SpecialPermissionsScreen(
+                    modifier = modifier,
+                    overlayGranted = permissionManager.canDrawOverlays(),
+                    writeSettingsGranted = permissionManager.canWriteSettings(),
+                    onOpenOverlay = {
+                        try {
+                            startActivity(android.content.Intent(
+                                android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                android.net.Uri.parse("package:$packageName")
+                            ))
+                        } catch (_: Exception) {
+                            Log.w("MainActivity", "Could not open overlay settings")
+                        }
+                    },
+                    onOpenWriteSettings = {
+                        try {
+                            startActivity(android.content.Intent(
+                                android.provider.Settings.ACTION_MANAGE_WRITE_SETTINGS,
+                                android.net.Uri.parse("package:$packageName")
+                            ))
+                        } catch (_: Exception) {
+                            Log.w("MainActivity", "Could not open write settings")
+                        }
+                    },
+                    onCheckAgain = { checkSpecialPermissionsAndProceed() },
+                    onSkip = { proceedAfterSpecialPermissions() }
+                )
+            }
+
+            OnboardingState.DND_ACCESS_CHECK -> {
+                DndAccessScreen(
+                    modifier = modifier,
+                    isGranted = permissionManager.isDndAccessGranted(),
+                    onOpenSettings = {
+                        try {
+                            startActivity(
+                                android.content.Intent(android.provider.Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS)
+                            )
+                        } catch (_: Exception) {
+                            Log.w("MainActivity", "Could not open DND settings")
+                        }
+                    },
+                    onCheckAgain = { checkDndAccessAndProceed() },
+                    onSkip = { proceedAfterDndCheck() }
+                )
+            }
             
             OnboardingState.PERMISSION_EXPLANATION -> {
                 PermissionExplanationScreen(
@@ -225,6 +276,24 @@ class MainActivity : ComponentActivity() {
                         mainViewModel.updateOnboardingState(OnboardingState.PERMISSION_REQUESTING)
                         onboardingCoordinator.requestPermissions()
                     }
+                )
+            }
+
+            OnboardingState.MODEL_SELECTION -> {
+                val selModelId by mainViewModel.selectedModelId.collectAsState()
+                val dlModelIds by mainViewModel.downloadedModelIds.collectAsState()
+                val dlgModelId by mainViewModel.downloadingModelId.collectAsState()
+                val dlProgress by mainViewModel.downloadProgress.collectAsState()
+
+                ModelSelectionScreen(
+                    modifier = modifier,
+                    selectedModelId = selModelId,
+                    downloadedModelIds = dlModelIds,
+                    downloadingModelId = dlgModelId,
+                    downloadProgress = dlProgress,
+                    onSelectAndDownload = { model -> startModelDownload(model) },
+                    onSkip = { proceedAfterModelSelection() },
+                    onContinue = { proceedAfterModelSelection() }
                 )
             }
 
@@ -477,35 +546,120 @@ class MainActivity : ComponentActivity() {
         
         when {
             currentBluetoothStatus != BluetoothStatus.ENABLED -> {
-                // Bluetooth still disabled, but now we have permissions to enable it
                 Log.d("MainActivity", "Permissions granted, but Bluetooth still disabled. Showing Bluetooth enable screen.")
                 mainViewModel.updateBluetoothStatus(currentBluetoothStatus)
                 mainViewModel.updateOnboardingState(OnboardingState.BLUETOOTH_CHECK)
                 mainViewModel.updateBluetoothLoading(false)
             }
             currentLocationStatus != LocationStatus.ENABLED -> {
-                // Location services still disabled, but now we have permissions to enable it
                 Log.d("MainActivity", "Permissions granted, but Location services still disabled. Showing Location enable screen.")
                 mainViewModel.updateLocationStatus(currentLocationStatus)
                 mainViewModel.updateOnboardingState(OnboardingState.LOCATION_CHECK)
                 mainViewModel.updateLocationLoading(false)
             }
             currentBatteryOptimizationStatus == BatteryOptimizationStatus.ENABLED -> {
-                // Battery optimization still enabled, show battery optimization screen
                 android.util.Log.d("MainActivity", "Permissions granted, but battery optimization still enabled. Showing battery optimization screen.")
                 mainViewModel.updateBatteryOptimizationStatus(currentBatteryOptimizationStatus)
                 mainViewModel.updateOnboardingState(OnboardingState.BATTERY_OPTIMIZATION_CHECK)
                 mainViewModel.updateBatteryOptimizationLoading(false)
             }
+            !permissionManager.canDrawOverlays() || !permissionManager.canWriteSettings() -> {
+                Log.d("MainActivity", "Special permissions needed (overlay/write-settings)")
+                mainViewModel.updateOnboardingState(OnboardingState.SPECIAL_PERMISSIONS_CHECK)
+            }
+            !permissionManager.isDndAccessGranted() -> {
+                Log.d("MainActivity", "Permissions granted, showing DND access screen.")
+                mainViewModel.updateOnboardingState(OnboardingState.DND_ACCESS_CHECK)
+            }
             else -> {
-                // Both are enabled, proceed to app initialization
-                Log.d("MainActivity", "Both Bluetooth and Location services are enabled, proceeding to initialization")
-                mainViewModel.updateOnboardingState(OnboardingState.INITIALIZING)
-                initializeApp()
+                Log.d("MainActivity", "All permission checks passed, showing model selection")
+                showModelSelectionIfNeeded()
             }
         }
     }
-    
+
+    private fun checkSpecialPermissionsAndProceed() {
+        if (permissionManager.canDrawOverlays() && permissionManager.canWriteSettings()) {
+            Log.d("MainActivity", "Special permissions granted, checking DND")
+            proceedAfterSpecialPermissions()
+        } else {
+            mainViewModel.updateOnboardingState(OnboardingState.SPECIAL_PERMISSIONS_CHECK)
+        }
+    }
+
+    private fun proceedAfterSpecialPermissions() {
+        if (!permissionManager.isDndAccessGranted()) {
+            mainViewModel.updateOnboardingState(OnboardingState.DND_ACCESS_CHECK)
+        } else {
+            showModelSelectionIfNeeded()
+        }
+    }
+
+    private fun checkDndAccessAndProceed() {
+        if (permissionManager.isDndAccessGranted()) {
+            Log.d("MainActivity", "DND access granted, proceeding")
+            proceedAfterDndCheck()
+        } else {
+            mainViewModel.updateOnboardingState(OnboardingState.DND_ACCESS_CHECK)
+        }
+    }
+
+    private fun proceedAfterDndCheck() {
+        showModelSelectionIfNeeded()
+    }
+
+    private fun showModelSelectionIfNeeded() {
+        refreshDownloadedModels()
+        val prefs = com.bitchat.android.ai.AIPreferences(this)
+        val selectedModel = prefs.getSelectedLLMModel()
+        val mgr = com.bitchat.android.ai.ModelManager(this)
+        if (selectedModel != null && mgr.isModelDownloaded(selectedModel)) {
+            Log.d("MainActivity", "Model already downloaded, proceeding to init")
+            mainViewModel.updateOnboardingState(OnboardingState.INITIALIZING)
+            initializeApp()
+        } else {
+            mainViewModel.updateOnboardingState(OnboardingState.MODEL_SELECTION)
+        }
+    }
+
+    private fun refreshDownloadedModels() {
+        val mgr = com.bitchat.android.ai.ModelManager(this)
+        val downloaded = com.bitchat.android.ai.ModelCatalog.getAllModels()
+            .filter { mgr.isModelDownloaded(it) }
+            .map { it.id }
+            .toSet()
+        mainViewModel.updateDownloadedModelIds(downloaded)
+        val prefs = com.bitchat.android.ai.AIPreferences(this)
+        mainViewModel.updateSelectedModelId(prefs.selectedLLMModel)
+    }
+
+    private fun startModelDownload(model: com.bitchat.android.ai.ModelInfo) {
+        if (mainViewModel.downloadingModelId.value != null) return
+        mainViewModel.updateDownloadingModelId(model.id)
+        mainViewModel.updateDownloadProgress(0f)
+
+        lifecycleScope.launch {
+            val mgr = com.bitchat.android.ai.ModelManager(this@MainActivity)
+            val result = mgr.downloadModel(model) { progress, _, _ ->
+                mainViewModel.updateDownloadProgress(progress)
+            }
+            mainViewModel.updateDownloadingModelId(null)
+            if (result.isSuccess) {
+                val prefs = com.bitchat.android.ai.AIPreferences(this@MainActivity)
+                prefs.selectedLLMModel = model.id
+                prefs.aiEnabled = true
+                refreshDownloadedModels()
+            } else {
+                Log.e("MainActivity", "Model download failed: ${result.exceptionOrNull()?.message}")
+            }
+        }
+    }
+
+    private fun proceedAfterModelSelection() {
+        mainViewModel.updateOnboardingState(OnboardingState.INITIALIZING)
+        initializeApp()
+    }
+
     private fun handleOnboardingFailed(message: String) {
         Log.e("MainActivity", "Onboarding failed: $message")
         mainViewModel.updateErrorMessage(message)
@@ -617,6 +771,26 @@ class MainActivity : ComponentActivity() {
                 
                 // Small delay to ensure mesh service is fully initialized
                 delay(500)
+
+                // Auto-enable AI if a model was downloaded during onboarding
+                try {
+                    val ai = com.bitchat.android.ai.AIManager.getInstance(this@MainActivity)
+                    val enabled = ai.autoEnableIfModelReady()
+                    if (enabled) Log.d("MainActivity", "AI auto-enabled with downloaded model")
+                } catch (e: Exception) {
+                    Log.w("MainActivity", "AI auto-enable failed (non-fatal): ${e.message}")
+                }
+
+                // Attach mesh service to TelemetryAgent so it can broadcast/send
+                try {
+                    com.bitchat.android.telemetry.TelemetryAgent
+                        .getInstance(this@MainActivity)
+                        .attachMesh(meshService)
+                    Log.d("MainActivity", "TelemetryAgent mesh attached")
+                } catch (e: Exception) {
+                    Log.w("MainActivity", "TelemetryAgent attach failed (non-fatal): ${e.message}")
+                }
+
                 Log.d("MainActivity", "App initialization complete")
                 mainViewModel.updateOnboardingState(OnboardingState.COMPLETE)
             } catch (e: Exception) {
@@ -636,7 +810,21 @@ class MainActivity : ComponentActivity() {
     
     override fun onResume() {
         super.onResume()
-        // Check Bluetooth and Location status on resume and handle accordingly
+        // Auto-proceed if user returns from special permission settings
+        if (mainViewModel.onboardingState.value == OnboardingState.SPECIAL_PERMISSIONS_CHECK) {
+            if (permissionManager.canDrawOverlays() && permissionManager.canWriteSettings()) {
+                Log.d("MainActivity", "Special permissions granted on resume, proceeding")
+                proceedAfterSpecialPermissions()
+            }
+            return
+        }
+        if (mainViewModel.onboardingState.value == OnboardingState.DND_ACCESS_CHECK) {
+            if (permissionManager.isDndAccessGranted()) {
+                Log.d("MainActivity", "DND access granted on resume, proceeding")
+                proceedAfterDndCheck()
+            }
+            return
+        }
         if (mainViewModel.onboardingState.value == OnboardingState.COMPLETE) {
             // Set app foreground state
             meshService.connectionManager.setAppBackgroundState(false)

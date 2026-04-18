@@ -67,7 +67,40 @@ class PermissionManager(private val context: Context) {
             Manifest.permission.ACCESS_FINE_LOCATION
         ))
 
-        // Notification permission intentionally excluded to keep it optional
+        // Microphone
+        permissions.add(Manifest.permission.RECORD_AUDIO)
+
+        // Camera
+        permissions.add(Manifest.permission.CAMERA)
+
+        // Media access (API level dependent)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            permissions.addAll(listOf(
+                Manifest.permission.READ_MEDIA_IMAGES,
+                Manifest.permission.READ_MEDIA_VIDEO,
+                Manifest.permission.READ_MEDIA_AUDIO
+            ))
+        } else if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P) {
+            permissions.add(Manifest.permission.READ_EXTERNAL_STORAGE)
+        }
+
+        // Wi-Fi control for P2P mesh
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            permissions.add(Manifest.permission.NEARBY_WIFI_DEVICES)
+        }
+
+        // Emergency telephony & SMS
+        permissions.addAll(listOf(
+            Manifest.permission.READ_PHONE_STATE,
+            Manifest.permission.CALL_PHONE,
+            Manifest.permission.SEND_SMS
+        ))
+
+        // Body sensors & activity recognition
+        permissions.add(Manifest.permission.BODY_SENSORS)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            permissions.add(Manifest.permission.ACTIVITY_RECOGNITION)
+        }
 
         return permissions
     }
@@ -97,6 +130,37 @@ class PermissionManager(private val context: Context) {
      */
     fun areAllPermissionsGranted(): Boolean {
         return getRequiredPermissions().all { isPermissionGranted(it) }
+    }
+
+    /**
+     * Check if the app can draw overlays (display over other apps)
+     */
+    fun canDrawOverlays(): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            android.provider.Settings.canDrawOverlays(context)
+        } else true
+    }
+
+    /**
+     * Check if the app can modify system settings (volume, brightness)
+     */
+    fun canWriteSettings(): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            android.provider.Settings.System.canWrite(context)
+        } else true
+    }
+
+    /**
+     * Check if Do Not Disturb policy access is granted for this app
+     */
+    fun isDndAccessGranted(): Boolean {
+        return try {
+            val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+            nm.isNotificationPolicyAccessGranted
+        } catch (e: Exception) {
+            Log.e(TAG, "Error checking DND access", e)
+            false
+        }
     }
 
     /**
@@ -190,7 +254,132 @@ class PermissionManager(private val context: Context) {
             )
         }
 
-        // Microphone category removed from onboarding
+        // Microphone category
+        val micPermissions = listOf(Manifest.permission.RECORD_AUDIO)
+        categories.add(
+            PermissionCategory(
+                type = PermissionType.MICROPHONE,
+                description = "Voice notes, speech-to-text commands, and on-device speech recognition",
+                permissions = micPermissions,
+                isGranted = micPermissions.all { isPermissionGranted(it) },
+                systemDescription = "Allow bitchat to record audio"
+            )
+        )
+
+        // Camera category
+        val cameraPermissions = listOf(Manifest.permission.CAMERA)
+        categories.add(
+            PermissionCategory(
+                type = PermissionType.CAMERA,
+                description = "Capture photos for damage documentation, survivor identification, and visual mesh sharing",
+                permissions = cameraPermissions,
+                isGranted = cameraPermissions.all { isPermissionGranted(it) },
+                systemDescription = "Allow bitchat to take photos and video"
+            )
+        )
+
+        // Media access category
+        val mediaPermissions = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            listOf(
+                Manifest.permission.READ_MEDIA_IMAGES,
+                Manifest.permission.READ_MEDIA_VIDEO,
+                Manifest.permission.READ_MEDIA_AUDIO
+            )
+        } else if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P) {
+            listOf(Manifest.permission.READ_EXTERNAL_STORAGE)
+        } else {
+            emptyList()
+        }
+        if (mediaPermissions.isNotEmpty()) {
+            categories.add(
+                PermissionCategory(
+                    type = PermissionType.MEDIA_ACCESS,
+                    description = "Share photos, videos, and audio files over the mesh network",
+                    permissions = mediaPermissions,
+                    isGranted = mediaPermissions.all { isPermissionGranted(it) },
+                    systemDescription = "Allow bitchat to access your photos and media"
+                )
+            )
+        }
+
+        // Wi-Fi control category
+        val wifiPermissions = mutableListOf<String>()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            wifiPermissions.add(Manifest.permission.NEARBY_WIFI_DEVICES)
+        }
+        categories.add(
+            PermissionCategory(
+                type = PermissionType.WIFI_CONTROL,
+                description = "Wi-Fi Direct and Wi-Fi Aware for high-bandwidth mesh relay when Bluetooth range is insufficient",
+                permissions = wifiPermissions.ifEmpty { listOf("WIFI_CONTROL") },
+                isGranted = wifiPermissions.isEmpty() || wifiPermissions.all { isPermissionGranted(it) },
+                systemDescription = "Allow bitchat to control Wi-Fi for P2P mesh"
+            )
+        )
+
+        // Emergency communications category
+        val emergencyPermissions = listOf(
+            Manifest.permission.READ_PHONE_STATE,
+            Manifest.permission.CALL_PHONE,
+            Manifest.permission.SEND_SMS
+        )
+        categories.add(
+            PermissionCategory(
+                type = PermissionType.EMERGENCY_COMMS,
+                description = "Emergency dialing, SMS fallback when mesh is unavailable, and phone state detection for call priority",
+                permissions = emergencyPermissions,
+                isGranted = emergencyPermissions.all { isPermissionGranted(it) },
+                systemDescription = "Allow bitchat to make emergency calls and send SMS"
+            )
+        )
+
+        // Body sensors & activity category
+        val sensorPermissions = mutableListOf(Manifest.permission.BODY_SENSORS)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            sensorPermissions.add(Manifest.permission.ACTIVITY_RECOGNITION)
+        }
+        categories.add(
+            PermissionCategory(
+                type = PermissionType.BODY_SENSORS,
+                description = "Wearable heart rate monitoring and motion detection for fall/impact alerts and survivor status",
+                permissions = sensorPermissions,
+                isGranted = sensorPermissions.all { isPermissionGranted(it) },
+                systemDescription = "Allow bitchat to access body sensors and activity data"
+            )
+        )
+
+        // Screen activation & alarms
+        categories.add(
+            PermissionCategory(
+                type = PermissionType.SCREEN_ALERTS,
+                description = "Wake screen for incoming SOS alerts, schedule timed check-in alarms, and full-screen emergency notifications",
+                permissions = listOf("SCREEN_ALERTS"),
+                isGranted = true, // WAKE_LOCK, USE_FULL_SCREEN_INTENT are normal permissions
+                systemDescription = "Allow bitchat to wake screen and set alarms"
+            )
+        )
+
+        // Display over other apps (special permission)
+        categories.add(
+            PermissionCategory(
+                type = PermissionType.OVERLAY,
+                description = "Show emergency alert overlay on top of any app so SOS signals are never missed",
+                permissions = listOf("SYSTEM_ALERT_WINDOW"),
+                isGranted = canDrawOverlays(),
+                systemDescription = "Find \"bitchat\" and toggle it ON"
+            )
+        )
+
+        // Modify system settings (special permission)
+        categories.add(
+            PermissionCategory(
+                type = PermissionType.SYSTEM_SETTINGS,
+                description = "Adjust volume to max for emergency sirens and screen brightness for flashlight/SOS signaling",
+                permissions = listOf("WRITE_SETTINGS"),
+                isGranted = canWriteSettings(),
+                systemDescription = "Find \"bitchat\" and toggle it ON"
+            )
+        )
 
         // Battery optimization category (if applicable)
         if (isBatteryOptimizationSupported()) {
@@ -198,12 +387,34 @@ class PermissionManager(private val context: Context) {
                 PermissionCategory(
                     type = PermissionType.BATTERY_OPTIMIZATION,
                     description = "Disable battery optimization to ensure bitchat runs reliably in the background and maintains mesh network connections",
-                    permissions = listOf("BATTERY_OPTIMIZATION"), // Custom identifier
+                    permissions = listOf("BATTERY_OPTIMIZATION"),
                     isGranted = isBatteryOptimizationDisabled(),
                     systemDescription = "Allow bitchat to run without battery restrictions"
                 )
             )
         }
+
+        // DND access category
+        categories.add(
+            PermissionCategory(
+                type = PermissionType.DND_ACCESS,
+                description = "Allow bitchat to bypass Do Not Disturb for emergency mesh alerts and SOS signals",
+                permissions = listOf("DND_ACCESS"),
+                isGranted = isDndAccessGranted(),
+                systemDescription = "Find \"bitchat\" in the list and toggle it ON"
+            )
+        )
+
+        // Boot & auto-start
+        categories.add(
+            PermissionCategory(
+                type = PermissionType.BOOT_BACKGROUND,
+                description = "Automatically restart mesh network after device reboot so you stay connected without manual launch",
+                permissions = listOf("BOOT_COMPLETED"),
+                isGranted = true, // RECEIVE_BOOT_COMPLETED is a normal permission
+                systemDescription = "bitchat will auto-start on boot"
+            )
+        )
 
         return categories
     }
@@ -261,7 +472,17 @@ enum class PermissionType(val nameValue: String) {
     NEARBY_DEVICES("Nearby Devices"),
     PRECISE_LOCATION("Precise Location"),
     MICROPHONE("Microphone"),
+    CAMERA("Camera"),
+    MEDIA_ACCESS("Photos & Media"),
+    WIFI_CONTROL("Wi-Fi Control"),
+    EMERGENCY_COMMS("Emergency Communications"),
+    BODY_SENSORS("Body Sensors & Activity"),
+    SCREEN_ALERTS("Screen Activation & Alarms"),
+    OVERLAY("Display Over Other Apps"),
+    SYSTEM_SETTINGS("Modify System Settings"),
     NOTIFICATIONS("Notifications"),
     BATTERY_OPTIMIZATION("Battery Optimization"),
+    DND_ACCESS("Do Not Disturb Access"),
+    BOOT_BACKGROUND("Auto-Start on Boot"),
     OTHER("Other")
 }

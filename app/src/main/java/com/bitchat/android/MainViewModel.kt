@@ -35,6 +35,19 @@ class MainViewModel : ViewModel() {
     private val _isBatteryOptimizationLoading = MutableStateFlow(false)
     val isBatteryOptimizationLoading: StateFlow<Boolean> = _isBatteryOptimizationLoading.asStateFlow()
 
+    // Model download state
+    private val _selectedModelId = MutableStateFlow<String?>(null)
+    val selectedModelId: StateFlow<String?> = _selectedModelId.asStateFlow()
+
+    private val _downloadedModelIds = MutableStateFlow<Set<String>>(emptySet())
+    val downloadedModelIds: StateFlow<Set<String>> = _downloadedModelIds.asStateFlow()
+
+    private val _downloadingModelId = MutableStateFlow<String?>(null)
+    val downloadingModelId: StateFlow<String?> = _downloadingModelId.asStateFlow()
+
+    private val _downloadProgress = MutableStateFlow(0f)
+    val downloadProgress: StateFlow<Float> = _downloadProgress.asStateFlow()
+
     // Public update functions for MainActivity
     fun updateOnboardingState(state: OnboardingState) {
         _onboardingState.value = state
@@ -67,4 +80,9 @@ class MainViewModel : ViewModel() {
     fun updateBatteryOptimizationLoading(loading: Boolean) {
         _isBatteryOptimizationLoading.value = loading
     }
+
+    fun updateSelectedModelId(id: String?) { _selectedModelId.value = id }
+    fun updateDownloadedModelIds(ids: Set<String>) { _downloadedModelIds.value = ids }
+    fun updateDownloadingModelId(id: String?) { _downloadingModelId.value = id }
+    fun updateDownloadProgress(progress: Float) { _downloadProgress.value = progress }
 }

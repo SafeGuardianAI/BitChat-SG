@@ -21,7 +21,8 @@ class MeshDelegateHandler(
     private val coroutineScope: CoroutineScope,
     private val onHapticFeedback: () -> Unit,
     private val getMyPeerID: () -> String,
-    private val getMeshService: () -> BluetoothMeshService
+    private val getMeshService: () -> BluetoothMeshService,
+    private val onIncomingMessage: ((BitchatMessage) -> Unit)? = null
 ) : BluetoothMeshDelegate {
 
     override fun didReceiveMessage(message: BitchatMessage) {
@@ -42,6 +43,9 @@ class MeshDelegateHandler(
             
             // Trigger haptic feedback
             onHapticFeedback()
+
+            // Disaster TTS: auto-read emergency messages
+            onIncomingMessage?.invoke(message)
 
             if (message.isPrivate) {
                 // Private message

@@ -24,15 +24,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.bitchat.android.ui.theme.BitchatTheme
 
-class ConnectivityTestActivity : ComponentActivity() {
+class TelemetryTestActivity : ComponentActivity() {
 
-    private val viewModel: ConnectivityTestViewModel by viewModels()
+    private val viewModel: TelemetryTestViewModel by viewModels()
 
-    // Permission launcher for location tests
     private val locationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { grants ->
-        // Re-run pending test after permission result
         pendingTestAfterPermission?.let { (catId, testId) ->
             viewModel.runSingleTest(catId, testId)
             pendingTestAfterPermission = null
@@ -46,7 +44,7 @@ class ConnectivityTestActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             BitchatTheme {
-                ConnectivityTestScreen(
+                TelemetryTestScreen(
                     viewModel = viewModel,
                     onBack = { finish() },
                     onRequestPermission = { categoryId, testId, permission ->
@@ -61,14 +59,14 @@ class ConnectivityTestActivity : ComponentActivity() {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ConnectivityTestScreen(
-    viewModel: ConnectivityTestViewModel,
+fun TelemetryTestScreen(
+    viewModel: TelemetryTestViewModel,
     onBack: () -> Unit,
     onRequestPermission: (String, String, String) -> Unit
 ) {
     val categories by viewModel.categories.collectAsState()
     val isRunningAll by viewModel.isRunningAll.collectAsState()
-    val meshShareEnabled by viewModel.meshShareEnabled.collectAsState()
+    val meshTransmitEnabled by viewModel.meshTransmitEnabled.collectAsState()
     val lastPackedSize by viewModel.lastPackedSize.collectAsState()
 
     Scaffold(
@@ -77,14 +75,14 @@ fun ConnectivityTestScreen(
                 title = {
                     Column {
                         Text(
-                            "connectivity test",
+                            "telemetry test",
                             fontFamily = FontFamily.Monospace,
                             fontSize = 16.sp,
                             fontWeight = FontWeight.Medium
                         )
                         if (lastPackedSize > 0) {
                             Text(
-                                "packed: ${lastPackedSize}B | mesh: ${if (meshShareEnabled) "on" else "off"}",
+                                "packed: ${lastPackedSize}B | mesh: ${if (meshTransmitEnabled) "on" else "off"}",
                                 fontFamily = FontFamily.Monospace,
                                 fontSize = 10.sp,
                                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
@@ -98,11 +96,13 @@ fun ConnectivityTestScreen(
                     }
                 },
                 actions = {
-                    IconButton(onClick = { viewModel.toggleMeshShare() }) {
+                    IconButton(
+                        onClick = { viewModel.toggleMeshTransmit() }
+                    ) {
                         Icon(
                             Icons.Filled.Share,
-                            contentDescription = "Toggle mesh share",
-                            tint = if (meshShareEnabled)
+                            contentDescription = "Toggle mesh transmit",
+                            tint = if (meshTransmitEnabled)
                                 MaterialTheme.colorScheme.primary
                             else
                                 MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
@@ -154,7 +154,6 @@ fun ConnectivityTestScreen(
             verticalArrangement = Arrangement.spacedBy(8.dp),
             contentPadding = PaddingValues(vertical = 8.dp)
         ) {
-            // Summary header
             item {
                 val totalTests = categories.sumOf { it.items.size }
                 val totalPassed = categories.sumOf { it.passCount }
@@ -173,10 +172,10 @@ fun ConnectivityTestScreen(
                             horizontalArrangement = Arrangement.SpaceEvenly,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            SummaryItem("$totalTested/$totalTests", "tested")
-                            SummaryItem("$totalPassed", "pass", TestStatus.PASS.color)
-                            SummaryItem("$totalNotImpl", "avail", TestStatus.AVAILABLE_NOT_IMPLEMENTED.color)
-                            SummaryItem("$totalFailed", "fail", TestStatus.FAIL.color)
+                            SummaryChip("$totalTested/$totalTests", "tested")
+                            SummaryChip("$totalPassed", "pass", TestStatus.PASS.color)
+                            SummaryChip("$totalNotImpl", "avail", TestStatus.AVAILABLE_NOT_IMPLEMENTED.color)
+                            SummaryChip("$totalFailed", "fail", TestStatus.FAIL.color)
                         }
                     }
                 }
@@ -190,7 +189,6 @@ fun ConnectivityTestScreen(
                     onRunTest = { testId ->
                         val item = category.items.find { it.id == testId }
                         if (item?.requiresPermission != null) {
-                            // Check if permission already granted, otherwise request it
                             val ctx = viewModel.getApplication<android.app.Application>()
                             val granted = androidx.core.content.ContextCompat.checkSelfPermission(
                                 ctx, item.requiresPermission
@@ -207,14 +205,13 @@ fun ConnectivityTestScreen(
                 )
             }
 
-            // Bottom spacing
             item { Spacer(Modifier.height(16.dp)) }
         }
     }
 }
 
 @Composable
-private fun SummaryItem(
+private fun SummaryChip(
     value: String,
     label: String,
     color: androidx.compose.ui.graphics.Color = MaterialTheme.colorScheme.onSurface

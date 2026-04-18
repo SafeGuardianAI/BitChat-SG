@@ -14,6 +14,7 @@ import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
+import android.location.GnssStatus
 import android.location.LocationManager
 import android.net.ConnectivityManager
 import android.net.wifi.p2p.WifiP2pManager
@@ -48,6 +49,62 @@ class ConnectivityTestViewModel(application: Application) : AndroidViewModel(app
     private val _isRunningAll = MutableStateFlow(false)
     val isRunningAll: StateFlow<Boolean> = _isRunningAll.asStateFlow()
 
+    private val _meshShareEnabled = MutableStateFlow(false)
+    val meshShareEnabled: StateFlow<Boolean> = _meshShareEnabled.asStateFlow()
+
+    private val _lastPackedSize = MutableStateFlow(0)
+    val lastPackedSize: StateFlow<Int> = _lastPackedSize.asStateFlow()
+
+    fun toggleMeshShare() {
+        _meshShareEnabled.value = !_meshShareEnabled.value
+        if (_meshShareEnabled.value) {
+            packTestResults()
+            sendTelemetryOverMesh()
+        }
+    }
+
+    /**
+     * Broadcast telemetry on the main channel and as private messages to all peers.
+     */
+    fun sendTelemetryOverMesh() {
+        val agent = com.bitchat.android.telemetry.TelemetryAgent.getInstance(ctx)
+        // Enable basic sensors for this snapshot
+        agent.enableSensor("battery")
+        agent.enableSensor("time")
+        agent.enableSensor("connectivity")
+        // Broadcast to main channel
+        agent.broadcastToMainChannel()
+        // Also send privately to every connected peer
+        agent.sendToAllPeers()
+    }
+
+    fun packTestResults(): ByteArray? {
+        return try {
+            val packed = packConnectivitySnapshot()
+            _lastPackedSize.value = packed.size
+            packed
+        } catch (_: Exception) { null }
+    }
+
+    private fun packConnectivitySnapshot(): ByteArray {
+        val cats = _categories.value
+        val out = java.io.ByteArrayOutputStream()
+        val dos = java.io.DataOutputStream(out)
+        dos.writeByte(0x01) // format version
+        dos.writeLong(System.currentTimeMillis() / 1000)
+        dos.writeShort(cats.size)
+        for (cat in cats) {
+            dos.writeUTF(cat.id)
+            dos.writeShort(cat.items.size)
+            for (item in cat.items) {
+                dos.writeUTF(item.id)
+                dos.writeByte(item.status.ordinal)
+                dos.writeUTF(item.detail?.take(200) ?: "")
+            }
+        }
+        return out.toByteArray()
+    }
+
     fun toggleCategory(categoryId: String) {
         _categories.value = _categories.value.map {
             if (it.id == categoryId) it.copy(isExpanded = !it.isExpanded) else it
@@ -61,6 +118,7 @@ class ConnectivityTestViewModel(application: Application) : AndroidViewModel(app
                 runCategoryTestsInternal(cat.id)
             }
             _isRunningAll.value = false
+            if (_meshShareEnabled.value) packTestResults()
         }
     }
 
@@ -111,7 +169,7 @@ class ConnectivityTestViewModel(application: Application) : AndroidViewModel(app
     private suspend fun executeTest(categoryId: String, testId: String): TestResult {
         return withContext(Dispatchers.IO) {
             try {
-                withTimeoutOrNull(5000) {
+                withTimeoutOrNull(8000) {
                     when (categoryId) {
                         "satellite" -> executeSatelliteTest(testId)
                         "location" -> executeLocationTest(testId)
@@ -164,7 +222,7 @@ class ConnectivityTestViewModel(application: Application) : AndroidViewModel(app
 
     // ─── Category 2: Offline Location & GNSS ─────────────────────────
 
-    private fun executeLocationTest(testId: String): TestResult = when (testId) {
+    private suspend fun executeLocationTest(testId: String): TestResult = when (testId) {
         "gps_provider" -> {
             val lm = ctx.getSystemService(Context.LOCATION_SERVICE) as LocationManager
             val gpsEnabled = lm.isProviderEnabled(LocationManager.GPS_PROVIDER)
@@ -182,17 +240,65 @@ class ConnectivityTestViewModel(application: Application) : AndroidViewModel(app
         "satellite_count" -> {
             if (!hasPermission(Manifest.permission.ACCESS_FINE_LOCATION)) {
                 TestResult(TestStatus.FAIL, "needs ACCESS_FINE_LOCATION permission")
+            } else if (Build.VERSION.SDK_INT < 24) {
+                TestResult(TestStatus.UNAVAILABLE, "GnssStatus requires API 24+")
             } else {
                 val lm = ctx.getSystemService(Context.LOCATION_SERVICE) as LocationManager
                 try {
-                    val lastLoc = lm.getLastKnownLocation(LocationManager.GPS_PROVIDER)
-                    val detail = if (lastLoc != null) {
-                        "last fix: ${String.format("%.5f", lastLoc.latitude)}, ${String.format("%.5f", lastLoc.longitude)} " +
-                            "(acc: ${lastLoc.accuracy.toInt()}m)"
-                    } else "no cached GPS fix"
-                    TestResult(TestStatus.AVAILABLE_NOT_IMPLEMENTED, "$detail | GNSS status callback not implemented")
+                    withContext(Dispatchers.Main) {
+                        suspendCancellableCoroutine { cont ->
+                            val callback = object : GnssStatus.Callback() {
+                                override fun onSatelliteStatusChanged(status: GnssStatus) {
+                                    lm.unregisterGnssStatusCallback(this)
+                                    val total = status.satelliteCount
+                                    var usedInFix = 0
+                                    val constellations = mutableSetOf<String>()
+                                    for (i in 0 until total) {
+                                        if (status.usedInFix(i)) usedInFix++
+                                        constellations.add(when (status.getConstellationType(i)) {
+                                            GnssStatus.CONSTELLATION_GPS -> "GPS"
+                                            GnssStatus.CONSTELLATION_GLONASS -> "GLONASS"
+                                            GnssStatus.CONSTELLATION_BEIDOU -> "BeiDou"
+                                            GnssStatus.CONSTELLATION_GALILEO -> "Galileo"
+                                            GnssStatus.CONSTELLATION_QZSS -> "QZSS"
+                                            GnssStatus.CONSTELLATION_SBAS -> "SBAS"
+                                            else -> "other"
+                                        })
+                                    }
+                                    if (cont.isActive) {
+                                        cont.resume(TestResult(
+                                            TestStatus.PASS,
+                                            "$total visible | $usedInFix in fix | ${constellations.joinToString()}"
+                                        )) {}
+                                    }
+                                }
+                            }
+                            lm.registerGnssStatusCallback(callback, android.os.Handler(android.os.Looper.getMainLooper()))
+                            cont.invokeOnCancellation {
+                                lm.unregisterGnssStatusCallback(callback)
+                            }
+                            viewModelScope.launch {
+                                delay(4000)
+                                lm.unregisterGnssStatusCallback(callback)
+                                if (cont.isActive) {
+                                    val lastLoc = try {
+                                        lm.getLastKnownLocation(LocationManager.GPS_PROVIDER)
+                                    } catch (_: SecurityException) { null }
+                                    val locDetail = if (lastLoc != null) {
+                                        "last fix: %.5f, %.5f (acc: %dm)".format(
+                                            lastLoc.latitude, lastLoc.longitude, lastLoc.accuracy.toInt()
+                                        )
+                                    } else "no cached fix"
+                                    cont.resume(TestResult(
+                                        TestStatus.AVAILABLE,
+                                        "no GNSS status in 4s (GPS may be cold) | $locDetail"
+                                    )) {}
+                                }
+                            }
+                        }
+                    }
                 } catch (e: SecurityException) {
-                    TestResult(TestStatus.FAIL, "permission denied")
+                    TestResult(TestStatus.FAIL, "permission denied: ${e.message?.take(40)}")
                 }
             }
         }
@@ -367,18 +473,25 @@ class ConnectivityTestViewModel(application: Application) : AndroidViewModel(app
             withContext(Dispatchers.Main) {
                 suspendCancellableCoroutine { cont ->
                     var tts: TextToSpeech? = null
-                    tts = TextToSpeech(ctx) { status ->
+                    tts = TextToSpeech(getApplication()) { status ->
                         if (status == TextToSpeech.SUCCESS) {
-                            val langs = tts?.availableLanguages?.size ?: 0
-                            val engine = tts?.defaultEngine ?: "unknown"
+                            val langs = try { tts?.availableLanguages?.size ?: 0 } catch (_: Exception) { 0 }
+                            val engine = try { tts?.defaultEngine ?: "unknown" } catch (_: Exception) { "unknown" }
                             tts?.shutdown()
                             if (cont.isActive) cont.resume(TestResult(TestStatus.PASS, "engine: $engine | $langs languages")) {}
                         } else {
                             tts?.shutdown()
-                            if (cont.isActive) cont.resume(TestResult(TestStatus.FAIL, "TTS init failed (status=$status)")) {}
+                            if (cont.isActive) cont.resume(TestResult(TestStatus.FAIL, "TTS init failed (status=$status) — check Settings > Accessibility > TTS")) {}
                         }
                     }
                     cont.invokeOnCancellation { tts?.shutdown() }
+                    viewModelScope.launch {
+                        delay(4000)
+                        if (cont.isActive) {
+                            tts?.shutdown()
+                            cont.resume(TestResult(TestStatus.FAIL, "TTS init timed out (4s) — check Settings > Accessibility > TTS output")) {}
+                        }
+                    }
                 }
             }
         }
@@ -405,8 +518,20 @@ class ConnectivityTestViewModel(application: Application) : AndroidViewModel(app
         "dnd_bypass" -> {
             val nm = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             val granted = nm.isNotificationPolicyAccessGranted
-            if (granted) TestResult(TestStatus.PASS, "DND policy access granted")
-            else TestResult(TestStatus.AVAILABLE_NOT_IMPLEMENTED, "DND policy access not granted (can use USAGE_ALARM bypass)")
+            if (granted) {
+                TestResult(TestStatus.PASS, "DND policy access granted — can override Do Not Disturb for emergency alerts")
+            } else {
+                try {
+                    val intent = Intent(android.provider.Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS)
+                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    ctx.startActivity(intent)
+                    TestResult(TestStatus.AVAILABLE,
+                        "Settings opened → find \"bitchat\" in the list and toggle it ON, then re-run this test")
+                } catch (_: Exception) {
+                    TestResult(TestStatus.FAIL,
+                        "Go to Settings > Apps > Special access > Do Not Disturb > enable \"bitchat\"")
+                }
+            }
         }
         else -> TestResult(TestStatus.FAIL, "unknown test")
     }
@@ -589,32 +714,57 @@ class ConnectivityTestViewModel(application: Application) : AndroidViewModel(app
         "speech_recognizer" -> {
             val available = SpeechRecognizer.isRecognitionAvailable(ctx)
             val onDevice = if (Build.VERSION.SDK_INT >= 33) {
-                SpeechRecognizer.isOnDeviceRecognitionAvailable(ctx)
+                try { SpeechRecognizer.isOnDeviceRecognitionAvailable(ctx) } catch (_: Exception) { null }
             } else null
+            val hasGoogleApp = try {
+                ctx.packageManager.getPackageInfo("com.google.android.googlequicksearchbox", 0)
+                true
+            } catch (_: PackageManager.NameNotFoundException) { false }
             val detail = buildString {
-                append("recognition=$available")
+                append("cloud=$available")
                 if (onDevice != null) append(" | on-device=$onDevice")
-                else append(" | on-device check requires API 33+")
+                append(" | Google app=${if (hasGoogleApp) "yes" else "NO (install for ASR)"}")
+                if (!available && !hasGoogleApp) {
+                    append("\n→ Install Google app or download offline speech in Settings > Languages")
+                }
             }
-            if (available) TestResult(TestStatus.AVAILABLE_NOT_IMPLEMENTED, detail)
-            else TestResult(TestStatus.UNAVAILABLE, detail)
+            when {
+                available || onDevice == true -> TestResult(TestStatus.PASS, detail)
+                hasGoogleApp -> TestResult(TestStatus.AVAILABLE, "$detail\n→ Download offline speech: Settings > System > Languages > Speech")
+                else -> TestResult(TestStatus.FAIL, detail)
+            }
         }
         "tts_voices" -> {
             withContext(Dispatchers.Main) {
                 suspendCancellableCoroutine { cont ->
                     var tts: TextToSpeech? = null
-                    tts = TextToSpeech(ctx) { status ->
+                    tts = TextToSpeech(getApplication()) { status ->
                         if (status == TextToSpeech.SUCCESS) {
-                            val langs = tts?.availableLanguages?.size ?: 0
-                            val currentLang = tts?.language?.displayName ?: "unknown"
+                            val langs = try { tts?.availableLanguages?.size ?: 0 } catch (_: Exception) { 0 }
+                            val voices = try { tts?.voices?.size ?: 0 } catch (_: Exception) { 0 }
+                            val currentLang = try { tts?.language?.displayName ?: "default" } catch (_: Exception) { "unknown" }
+                            val engine = try { tts?.defaultEngine ?: "?" } catch (_: Exception) { "?" }
                             tts?.shutdown()
-                            if (cont.isActive) cont.resume(TestResult(TestStatus.PASS, "$langs voices | current: $currentLang")) {}
+                            if (cont.isActive) cont.resume(TestResult(
+                                TestStatus.PASS,
+                                "$langs languages | $voices voices | engine=$engine | lang=$currentLang"
+                            )) {}
                         } else {
                             tts?.shutdown()
-                            if (cont.isActive) cont.resume(TestResult(TestStatus.FAIL, "TTS init failed")) {}
+                            if (cont.isActive) cont.resume(TestResult(
+                                TestStatus.FAIL,
+                                "TTS init failed (status=$status) — check Settings > Accessibility > TTS output"
+                            )) {}
                         }
                     }
                     cont.invokeOnCancellation { tts?.shutdown() }
+                    viewModelScope.launch {
+                        delay(4000)
+                        if (cont.isActive) {
+                            tts?.shutdown()
+                            cont.resume(TestResult(TestStatus.FAIL, "TTS voices timed out (4s) — check TTS settings")) {}
+                        }
+                    }
                 }
             }
         }

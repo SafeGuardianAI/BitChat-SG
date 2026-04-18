@@ -501,17 +501,30 @@ private fun ChatDialogs(
 
     // About sheet
     var showDebugSheet by remember { mutableStateOf(false) }
+    var showEmergencyFMSheet by remember { mutableStateOf(false) }
     val chatContext = LocalContext.current
     AboutSheet(
         isPresented = showAppInfo,
         onDismiss = onAppInfoDismiss,
         onShowDebug = { showDebugSheet = true },
+        onShowEmergencyFM = { showEmergencyFMSheet = true },
         onShowConnectivityTest = {
             chatContext.startActivity(
                 android.content.Intent(chatContext, com.bitchat.android.ui.connectivity.ConnectivityTestActivity::class.java)
             )
+        },
+        onShowTelemetryTest = {
+            chatContext.startActivity(
+                android.content.Intent(chatContext, com.bitchat.android.ui.connectivity.TelemetryTestActivity::class.java)
+            )
         }
     )
+
+    if (showEmergencyFMSheet) {
+        EmergencyFmScreenWrapper(
+            onDismiss = { showEmergencyFMSheet = false }
+        )
+    }
     if (showDebugSheet) {
         com.bitchat.android.ui.debug.DebugSettingsSheet(
             isPresented = showDebugSheet,

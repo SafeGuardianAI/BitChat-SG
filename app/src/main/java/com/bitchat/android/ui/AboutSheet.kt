@@ -29,6 +29,7 @@ import androidx.compose.ui.unit.sp
 import com.bitchat.android.nostr.NostrProofOfWork
 import com.bitchat.android.nostr.PoWPreferenceManager
 import com.bitchat.android.ui.debug.DebugSettingsSheet
+import com.bitchat.android.ui.theme.SGColors
 
 /**
  * About Sheet for bitchat app information
@@ -41,6 +42,8 @@ fun AboutSheet(
     onDismiss: () -> Unit,
     onShowDebug: (() -> Unit)? = null,
     onShowConnectivityTest: (() -> Unit)? = null,
+    onShowTelemetryTest: (() -> Unit)? = null,
+    onShowEmergencyFM: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -516,6 +519,21 @@ fun AboutSheet(
                             horizontalAlignment = Alignment.CenterHorizontally,
                             verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
+                            if (onShowEmergencyFM != null) {
+                                TextButton(
+                                    onClick = onShowEmergencyFM,
+                                    colors = ButtonDefaults.textButtonColors(
+                                        contentColor = SGColors.Critical
+                                    )
+                                ) {
+                                    Text(
+                                        text = "📻 Emergency FM",
+                                        fontSize = 12.sp,
+                                        fontFamily = FontFamily.Monospace,
+                                        fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
+                                    )
+                                }
+                            }
                             if (onShowConnectivityTest != null) {
                                 TextButton(
                                     onClick = onShowConnectivityTest,
@@ -525,6 +543,20 @@ fun AboutSheet(
                                 ) {
                                     Text(
                                         text = "Connectivity Test",
+                                        fontSize = 11.sp,
+                                        fontFamily = FontFamily.Monospace
+                                    )
+                                }
+                            }
+                            if (onShowTelemetryTest != null) {
+                                TextButton(
+                                    onClick = onShowTelemetryTest,
+                                    colors = ButtonDefaults.textButtonColors(
+                                        contentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                                    )
+                                ) {
+                                    Text(
+                                        text = "Telemetry Test",
                                         fontSize = 11.sp,
                                         fontFamily = FontFamily.Monospace
                                     )

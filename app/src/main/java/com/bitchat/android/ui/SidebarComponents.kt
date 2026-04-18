@@ -404,6 +404,13 @@ fun PeopleSection(
                 showNostrGlobe = false,
                 showHashSuffix = showHash
             )
+
+            // Peer telemetry / AI vital status sub-line
+            val peerTelem = try { viewModel.meshService.getPeerManager().getPeerTelemetry(peerID) } catch (_: Exception) { null }
+            val peerAI = try { viewModel.meshService.getPeerManager().getPeerAIStatus(peerID) } catch (_: Exception) { null }
+            if (peerTelem != null || peerAI != null) {
+                PeerStatusLine(peerTelem, peerAI, colorScheme)
+            }
         }
 
         // Append offline favorites we actively favorite (and not currently connected)
@@ -634,6 +641,43 @@ private fun PeerItem(
 }
 
 
+
+@Composable
+private fun PeerStatusLine(
+    telemetry: com.bitchat.android.mesh.PeerTelemetry?,
+    aiStatus: com.bitchat.android.mesh.PeerAIStatus?,
+    colorScheme: ColorScheme
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 48.dp, end = 24.dp, bottom = 2.dp)
+    ) {
+        if (telemetry != null) {
+            val caps = telemetry.capabilityLabels()
+            val capText = if (caps.isNotEmpty()) caps.joinToString(" ") else "no caps"
+            val age = (System.currentTimeMillis() - telemetry.receivedAt) / 1000
+            val battText = if (telemetry.batteryPercent >= 0) "🔋${telemetry.batteryPercent}%" else ""
+            Text(
+                text = "📡 $battText $capText (${age}s)",
+                style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
+                color = colorScheme.onSurface.copy(alpha = 0.45f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+        if (aiStatus?.vitalSummary != null) {
+            val age = (System.currentTimeMillis() - aiStatus.receivedAt) / 1000
+            Text(
+                text = "🤖 ${aiStatus.vitalSummary.take(60)} (${age}s)",
+                style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
+                color = Color(0xFF4CAF50).copy(alpha = 0.7f),
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+    }
+}
 
 @Composable
 private fun SignalStrengthIndicator(

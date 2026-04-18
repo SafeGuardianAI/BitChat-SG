@@ -114,13 +114,12 @@ class OnboardingCoordinator(
     }
 
     /**
-     * Get the list of critical permissions that are absolutely required
+     * Get the list of critical permissions that are absolutely required.
+     * Bluetooth and location are critical; mic, camera, media, and notifications are not.
      */
     private fun getCriticalPermissions(): List<String> {
-        // For bitchat, Bluetooth and location permissions are critical
-        // Notifications are nice-to-have but not critical
         return permissionManager.getRequiredPermissions().filter { permission ->
-            !permission.contains("POST_NOTIFICATIONS")
+            permission.contains("BLUETOOTH") || permission.contains("LOCATION")
         }
     }
 
@@ -210,6 +209,15 @@ class OnboardingCoordinator(
             permission.contains("BLUETOOTH") -> "Bluetooth/Nearby Devices"
             permission.contains("LOCATION") -> "Location (for Bluetooth scanning)"
             permission.contains("NOTIFICATION") -> "Notifications"
+            permission.contains("RECORD_AUDIO") -> "Microphone"
+            permission.contains("CAMERA") -> "Camera"
+            permission.contains("READ_MEDIA") || permission.contains("READ_EXTERNAL") -> "Photos & Media"
+            permission.contains("NEARBY_WIFI") -> "Wi-Fi P2P"
+            permission.contains("PHONE_STATE") -> "Phone State"
+            permission.contains("CALL_PHONE") -> "Emergency Calls"
+            permission.contains("SMS") -> "Emergency SMS"
+            permission.contains("BODY_SENSORS") -> "Body Sensors"
+            permission.contains("ACTIVITY_RECOGNITION") -> "Activity Recognition"
             else -> permission.substringAfterLast(".")
         }
     }
