@@ -205,7 +205,11 @@ class BluetoothMeshService(private val context: Context) {
             override fun updatePeerInfo(peerID: String, nickname: String, noisePublicKey: ByteArray, signingPublicKey: ByteArray, isVerified: Boolean): Boolean {
                 return peerManager.updatePeerInfo(peerID, nickname, noisePublicKey, signingPublicKey, isVerified)
             }
-            
+
+            override fun updatePeerTelemetry(peerID: String, rawTelemetry: ByteArray) {
+                parsePeerTelemetry(peerID, rawTelemetry)
+            }
+
             // Packet operations
             override fun sendPacket(packet: BitchatPacket) {
                 // Sign the packet before broadcasting
@@ -326,6 +330,14 @@ class BluetoothMeshService(private val context: Context) {
             
             override fun onReadReceiptReceived(messageID: String, peerID: String) {
                 delegate?.didReceiveReadReceipt(messageID, peerID)
+            }
+
+            override fun onPeerAIVitalReceived(peerID: String, nickname: String, vitalSummary: String) {
+                peerManager.updatePeerAIStatus(peerID, PeerAIStatus(
+                    vitalSummary = vitalSummary,
+                    senderNickname = nickname,
+                    receivedAt = System.currentTimeMillis()
+                ))
             }
         }
         
@@ -550,6 +562,31 @@ class BluetoothMeshService(private val context: Context) {
         }
     }
     
+    /**
+     * Broadcast an AI vital-status assessment over the mesh.
+     * Tagged with "🤖 " prefix so peers can parse and display it separately.
+     */
+    fun broadcastAIVitalStatus(vitalSummary: String) {
+        if (vitalSummary.isEmpty()) return
+        val taggedContent = "\u0007AI_VITAL|$vitalSummary"
+
+        serviceScope.launch {
+            val packet = BitchatPacket(
+                version = 1u,
+                type = MessageType.MESSAGE.value,
+                senderID = hexStringToByteArray(myPeerID),
+                recipientID = SpecialRecipients.BROADCAST,
+                timestamp = System.currentTimeMillis().toULong(),
+                payload = taggedContent.toByteArray(Charsets.UTF_8),
+                signature = null,
+                ttl = MAX_TTL
+            )
+            val signedPacket = signPacketBeforeBroadcast(packet)
+            connectionManager.broadcastPacket(RoutedPacket(signedPacket))
+            Log.d(TAG, "🤖 Broadcast AI vital status: ${vitalSummary.take(60)}")
+        }
+    }
+
     /**
      * Send private message - SIMPLIFIED iOS-compatible version 
      * Uses NoisePayloadType system exactly like iOS SimplifiedBluetoothService
@@ -1005,6 +1042,131 @@ class BluetoothMeshService(private val context: Context) {
         }
     }
     
+    // MARK: - Telemetry Transmission
+
+    fun getConnectedPeers(): List<String> = peerManager.getActivePeerIDs()
+    fun getPeerManager(): PeerManager = peerManager
+
+    /**
+     * Broadcast packed telemetry data over the mesh network.
+     * Uses ANNOUNCE packet type with telemetry payload appended to identity TLV.
+     */
+    fun broadcastTelemetry(packedTelemetry: ByteArray) {
+        if (packedTelemetry.isEmpty()) return
+
+        serviceScope.launch {
+            val nickname = delegate?.getNickname() ?: myPeerID
+            val staticKey = encryptionService.getStaticPublicKey() ?: return@launch
+            val signingKey = encryptionService.getSigningPublicKey() ?: return@launch
+
+            val announcement = IdentityAnnouncement(nickname, staticKey, signingKey)
+            val encodedPayload = announcement.encode() ?: return@launch
+
+            val telemetryTLV = encodeTelemetryTLV(packedTelemetry)
+            val fullPayload = encodedPayload + telemetryTLV
+
+            val packet = BitchatPacket(
+                type = MessageType.ANNOUNCE.value,
+                ttl = MAX_TTL,
+                senderID = myPeerID,
+                payload = fullPayload
+            )
+
+            val signedPacket = encryptionService.signData(packet.toBinaryDataForSigning()!!)?.let { signature ->
+                packet.copy(signature = signature)
+            } ?: packet
+
+            connectionManager.broadcastPacket(RoutedPacket(signedPacket))
+            Log.d(TAG, "Broadcast telemetry: ${packedTelemetry.size}B data in ${fullPayload.size}B payload")
+        }
+    }
+
+    /**
+     * Encode telemetry data as TLV blocks compatible with IdentityAnnouncement's
+     * 1-byte type + 1-byte length format. Data >255 bytes is split across
+     * continuation TLVs (0xFE = first/only, 0xFD = continuation chunk).
+     */
+    private fun encodeTelemetryTLV(data: ByteArray): ByteArray {
+        if (data.size <= 255) {
+            val tlv = ByteArray(2 + data.size)
+            tlv[0] = 0xFE.toByte()
+            tlv[1] = data.size.toByte()
+            System.arraycopy(data, 0, tlv, 2, data.size)
+            return tlv
+        }
+        val out = java.io.ByteArrayOutputStream()
+        var offset = 0
+        var first = true
+        while (offset < data.size) {
+            val chunkSize = minOf(255, data.size - offset)
+            out.write(if (first) 0xFE else 0xFD)
+            out.write(chunkSize)
+            out.write(data, offset, chunkSize)
+            offset += chunkSize
+            first = false
+        }
+        return out.toByteArray()
+    }
+
+    /**
+     * Parse raw telemetry bytes received from a peer and store in PeerManager.
+     * Wire format: connectivity snapshot packed by ConnectivityTestViewModel.packConnectivitySnapshot()
+     * or sensor data packed by TelemetryAgent.pack().
+     */
+    private fun parsePeerTelemetry(peerID: String, rawTelemetry: ByteArray) {
+        if (rawTelemetry.size < 4) return
+        try {
+            val buf = java.nio.ByteBuffer.wrap(rawTelemetry)
+            var capabilities = 0
+            var batteryPercent = -1
+            var thermalStatus = -1
+            var apiLevel = 0
+
+            // Try to detect format: connectivity snapshot starts with a 1-byte category count
+            val firstByte = rawTelemetry[0].toInt() and 0xFF
+            if (firstByte in 1..20 && rawTelemetry.size > 2) {
+                // Connectivity snapshot format: [categoryCount][catId, testCount, [testId, status, detailLen, detail...]*]*
+                val catCount = firstByte
+                var off = 1
+                for (c in 0 until catCount) {
+                    if (off + 2 > rawTelemetry.size) break
+                    val catId = rawTelemetry[off].toInt() and 0xFF
+                    val testCount = rawTelemetry[off + 1].toInt() and 0xFF
+                    off += 2
+                    for (t in 0 until testCount) {
+                        if (off + 3 > rawTelemetry.size) break
+                        val testId = rawTelemetry[off].toInt() and 0xFF
+                        val status = rawTelemetry[off + 1].toInt() and 0xFF
+                        val detailLen = rawTelemetry[off + 2].toInt() and 0xFF
+                        off += 3
+                        val detail = if (detailLen > 0 && off + detailLen <= rawTelemetry.size) {
+                            String(rawTelemetry, off, detailLen, Charsets.UTF_8)
+                        } else ""
+                        off += detailLen
+                        // Extract useful fields from known test IDs
+                        if (status == 1) { // PASS
+                            when (testId) {
+                                0 -> capabilities = capabilities or (1 shl 0)  // BLE
+                                1 -> capabilities = capabilities or (1 shl 2)  // GPS
+                                2 -> capabilities = capabilities or (1 shl 6)  // Internet
+                            }
+                        }
+                    }
+                }
+            }
+            peerManager.updatePeerTelemetry(peerID, PeerTelemetry(
+                capabilities = capabilities,
+                batteryPercent = batteryPercent,
+                thermalStatus = thermalStatus,
+                apiLevel = apiLevel,
+                rawPacked = rawTelemetry,
+                receivedAt = System.currentTimeMillis()
+            ))
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to parse peer telemetry from ${peerID.take(8)}: ${e.message}")
+        }
+    }
+
     // MARK: - File Transfer Support
     
     /**

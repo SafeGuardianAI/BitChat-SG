@@ -9,22 +9,47 @@ import java.util.concurrent.CopyOnWriteArrayList
  * Peer information structure with verification status
  * Compatible with iOS PeerInfo structure
  */
+data class PeerTelemetry(
+    val capabilities: Int = 0,
+    val batteryPercent: Int = -1,
+    val thermalStatus: Int = -1,
+    val apiLevel: Int = 0,
+    val rawPacked: ByteArray? = null,
+    val receivedAt: Long = System.currentTimeMillis()
+) {
+    fun capabilityLabels(): List<String> {
+        val labels = listOf(
+            "BLE", "BLE-Adv", "GPS", "Net-Loc", "WiFi-Direct", "WiFi-Aware",
+            "Internet", "Doze-Exempt", "Cam-Rear", "Cam-Front",
+            "Accel", "Gyro", "Baro", "Mag", "Light", "Proximity",
+            "TTS", "ASR", "Tel", "SIM", "Charging"
+        )
+        return labels.filterIndexed { i, _ -> (capabilities and (1 shl i)) != 0 }
+    }
+}
+
+data class PeerAIStatus(
+    val vitalSummary: String? = null,
+    val senderNickname: String? = null,
+    val receivedAt: Long = System.currentTimeMillis()
+)
+
 data class PeerInfo(
     val id: String,
     var nickname: String,
     var isConnected: Boolean,
     var isDirectConnection: Boolean,
     var noisePublicKey: ByteArray?,
-    var signingPublicKey: ByteArray?,      // NEW: Ed25519 public key for verification
-    var isVerifiedNickname: Boolean,       // NEW: Verification status flag
-    var lastSeen: Long  // Using Long instead of Date for simplicity
+    var signingPublicKey: ByteArray?,
+    var isVerifiedNickname: Boolean,
+    var lastSeen: Long,
+    var telemetry: PeerTelemetry? = null,
+    var aiStatus: PeerAIStatus? = null
 ) {
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
         if (javaClass != other?.javaClass) return false
-        
         other as PeerInfo
-        
         if (id != other.id) return false
         if (nickname != other.nickname) return false
         if (isConnected != other.isConnected) return false
@@ -39,10 +64,9 @@ data class PeerInfo(
         } else if (other.signingPublicKey != null) return false
         if (isVerifiedNickname != other.isVerifiedNickname) return false
         if (lastSeen != other.lastSeen) return false
-        
         return true
     }
-    
+
     override fun hashCode(): Int {
         var result = id.hashCode()
         result = 31 * result + nickname.hashCode()
@@ -142,6 +166,21 @@ class PeerManager {
         
         return false
     }
+
+    fun updatePeerTelemetry(peerID: String, telemetry: PeerTelemetry) {
+        val peer = peers[peerID] ?: return
+        peer.telemetry = telemetry
+        Log.d(TAG, "📡 Telemetry from ${peer.nickname}: batt=${telemetry.batteryPercent}% caps=${telemetry.capabilityLabels().joinToString(",")}")
+    }
+
+    fun updatePeerAIStatus(peerID: String, aiStatus: PeerAIStatus) {
+        val peer = peers[peerID] ?: return
+        peer.aiStatus = aiStatus
+        Log.d(TAG, "🤖 AI status from ${peer.nickname}: ${aiStatus.vitalSummary?.take(60)}")
+    }
+
+    fun getPeerTelemetry(peerID: String): PeerTelemetry? = peers[peerID]?.telemetry
+    fun getPeerAIStatus(peerID: String): PeerAIStatus? = peers[peerID]?.aiStatus
 
     /**
      * Get peer info

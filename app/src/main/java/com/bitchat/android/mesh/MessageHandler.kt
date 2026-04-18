@@ -16,19 +16,24 @@ import kotlin.random.Random
  * Extracted from BluetoothMeshService for better separation of concerns
  */
 class MessageHandler(private val myPeerID: String) {
-    
+
     companion object {
         private const val TAG = "MessageHandler"
+        /** Minimum milliseconds between telemetry status messages per peer. */
+        private const val TELEMETRY_THROTTLE_MS = 3 * 60 * 1000L  // 3 minutes
     }
-    
+
     // Delegate for callbacks
     var delegate: MessageHandlerDelegate? = null
-    
+
     // Reference to PacketProcessor for recursive packet handling
     var packetProcessor: PacketProcessor? = null
-    
+
     // Coroutines
     private val handlerScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+
+    /** Tracks the last time we injected a telemetry status message per peerID. */
+    private val lastTelemetryShownAt = mutableMapOf<String, Long>()
     
     /**
      * Handle Noise encrypted transport message - SIMPLIFIED iOS-compatible version
@@ -248,10 +253,71 @@ class MessageHandler(private val myPeerID: String) {
                 .updateFromAnnouncement(peerID, nickname, neighborsOrNull, packet.timestamp)
         } catch (_: Exception) { }
 
+        // Parse telemetry TLV (type 0xFE + optional 0xFD continuations) if present
+        try {
+            val telemetryData = decodeTelemetryFromPayload(packet.payload)
+            if (telemetryData != null && telemetryData.isNotEmpty()) {
+                delegate?.updatePeerTelemetry(peerID, telemetryData)
+                Log.d(TAG, "📡 Received ${telemetryData.size}B telemetry from ${peerID.take(8)}")
+
+                // Show telemetry as a visible status beacon in the chat feed.
+                // Throttle to TELEMETRY_THROTTLE_MS per peer, always show on first announce.
+                val now = System.currentTimeMillis()
+                val lastShown = lastTelemetryShownAt[peerID] ?: 0L
+                if (isFirstAnnounce || now - lastShown >= TELEMETRY_THROTTLE_MS) {
+                    val statusLine = TelemetryFormatter.format(telemetryData)
+                    if (statusLine != null) {
+                        lastTelemetryShownAt[peerID] = now
+                        val statusMessage = BitchatMessage(
+                            sender = nickname,
+                            senderPeerID = peerID,
+                            content = statusLine,
+                            timestamp = java.util.Date(now),
+                            isRelay = false
+                        )
+                        delegate?.onMessageReceived(statusMessage)
+                        Log.d(TAG, "📡 Status beacon for $nickname: $statusLine")
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Telemetry TLV parse failed for ${peerID.take(8)}: ${e.message}")
+        }
+
         Log.d(TAG, "✅ Processed verified TLV announce: stored identity for $peerID")
         return isFirstAnnounce
     }
     
+    /**
+     * Decode telemetry TLV(s) from an ANNOUNCE payload.
+     * Walks the full payload using 1-byte type + 1-byte length format,
+     * reassembling 0xFE (first) + 0xFD (continuation) chunks.
+     */
+    private fun decodeTelemetryFromPayload(payload: ByteArray): ByteArray? {
+        var offset = 0
+        val chunks = mutableListOf<ByteArray>()
+        while (offset + 2 <= payload.size) {
+            val typeValue = payload[offset].toInt() and 0xFF
+            val length = payload[offset + 1].toInt() and 0xFF
+            offset += 2
+            if (offset + length > payload.size) break
+            if (typeValue == 0xFE || typeValue == 0xFD) {
+                chunks.add(payload.copyOfRange(offset, offset + length))
+            }
+            offset += length
+        }
+        if (chunks.isEmpty()) return null
+        if (chunks.size == 1) return chunks[0]
+        val total = chunks.sumOf { it.size }
+        val result = ByteArray(total)
+        var pos = 0
+        for (chunk in chunks) {
+            System.arraycopy(chunk, 0, result, pos, chunk.size)
+            pos += chunk.size
+        }
+        return result
+    }
+
     /**
      * Handle Noise handshake - SIMPLIFIED iOS-compatible version
      * Single handshake type (0x10) with response determined by payload analysis
@@ -346,16 +412,31 @@ class MessageHandler(private val myPeerID: String) {
         }
         
         try {
-            // Parse message
+            val raw = String(packet.payload, Charsets.UTF_8)
+            val senderNick = delegate?.getPeerNickname(peerID) ?: "unknown"
+
+            // Detect AI vital status tagged messages (\u0007AI_VITAL|...)
+            if (raw.startsWith("\u0007AI_VITAL|")) {
+                val vitalSummary = raw.removePrefix("\u0007AI_VITAL|")
+                delegate?.onPeerAIVitalReceived(peerID, senderNick, vitalSummary)
+                val displayMsg = BitchatMessage(
+                    sender = senderNick,
+                    content = "🤖 AI Vital: $vitalSummary",
+                    senderPeerID = peerID,
+                    timestamp = Date(packet.timestamp.toLong())
+                )
+                delegate?.onMessageReceived(displayMsg)
+                return
+            }
+
             val message = BitchatMessage(
-                sender = delegate?.getPeerNickname(peerID) ?: "unknown",
-                content = String(packet.payload, Charsets.UTF_8),
+                sender = senderNick,
+                content = raw,
                 senderPeerID = peerID,
                 timestamp = Date(packet.timestamp.toLong())
             )
-
             delegate?.onMessageReceived(message)
-            
+
         } catch (e: Exception) {
             Log.e(TAG, "Failed to process broadcast message: ${e.message}")
         }
@@ -506,6 +587,7 @@ interface MessageHandlerDelegate {
     fun getMyNickname(): String?
     fun getPeerInfo(peerID: String): PeerInfo?
     fun updatePeerInfo(peerID: String, nickname: String, noisePublicKey: ByteArray, signingPublicKey: ByteArray, isVerified: Boolean): Boolean
+    fun updatePeerTelemetry(peerID: String, rawTelemetry: ByteArray)
     
     // Packet operations
     fun sendPacket(packet: BitchatPacket)
@@ -533,4 +615,5 @@ interface MessageHandlerDelegate {
     fun onChannelLeave(channel: String, fromPeer: String)
     fun onDeliveryAckReceived(messageID: String, peerID: String)
     fun onReadReceiptReceived(messageID: String, peerID: String)
+    fun onPeerAIVitalReceived(peerID: String, nickname: String, vitalSummary: String)
 }
