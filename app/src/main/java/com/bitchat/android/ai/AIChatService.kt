@@ -39,11 +39,15 @@ class AIChatService(
     suspend fun processMessage(
         message: String,
         channelId: String? = null,
-        useRAG: Boolean = true
+        useRAG: Boolean = true,
+        taskConfig: TaskConfig = TaskConfig.GENERAL_CHAT
     ): String = withContext(Dispatchers.IO) {
-        
+
         if (!aiManager.isAIReady()) {
-            return@withContext "AI system is not ready. Please check model status."
+            aiManager.autoEnableIfModelReady()
+        }
+        if (!aiManager.isAIReady()) {
+            return@withContext "AI system is not ready. Download a model in settings or use /download."
         }
 
         try {
@@ -68,7 +72,7 @@ class AIChatService(
                 // Add timeout and safety wrapper
                 kotlinx.coroutines.withTimeoutOrNull(65_000L) { // 65 seconds total timeout
                     try {
-                        aiManager.aiService.generateResponse(context).collect { response ->
+                        aiManager.aiService.generateResponse(context, taskConfig).collect { response ->
                             try {
                                 when (response) {
                                     is AIResponse.Token -> {
@@ -192,11 +196,15 @@ class AIChatService(
     fun streamResponse(
         message: String,
         channelId: String? = null,
-        useRAG: Boolean = true
+        useRAG: Boolean = true,
+        taskConfig: TaskConfig = TaskConfig.GENERAL_CHAT
     ): Flow<String> = flow {
-        
+
         if (!aiManager.isAIReady()) {
-            emit("AI system is not ready. Please check model status.")
+            aiManager.autoEnableIfModelReady()
+        }
+        if (!aiManager.isAIReady()) {
+            emit("AI system is not ready. Download a model in settings or use /download.")
             return@flow
         }
 
@@ -218,7 +226,7 @@ class AIChatService(
 
             // Stream AI response
             var fullResponse = ""
-            aiManager.aiService.generateResponse(context).collect { response ->
+            aiManager.aiService.generateResponse(context, taskConfig).collect { response ->
                 when (response) {
                     is AIResponse.Token -> {
                         fullResponse += response.text
@@ -387,13 +395,8 @@ class AIChatService(
     /**
      * Get ASR service status
      */
-    fun getASRStatus(): String {
-        return if (asrService.isInitialized) {
-            asrService.getCurrentModelInfo()
-        } else {
-            "ASR not initialized"
-        }
-    }
+    fun getASRStatus(): String =
+        if (asrService.isInitialized) "ASR ready (Whisper Tiny EN)" else "ASR not initialized"
     
     /**
      * Check if microphone permission is available
@@ -524,6 +527,51 @@ class AIChatService(
             Log.w(TAG, "Failed to get conversation context", e)
             ""
         }
+    }
+
+    /**
+     * Audio Scribe — transcribe a voice note file and run it through Gemma for
+     * a structured field report (transcript + key facts + next steps).
+     *
+     * @param audioPath Absolute path to the M4A voice note (from message.content)
+     * @return Structured report string, or an error message the caller can display inline.
+     */
+    suspend fun processAudioNote(audioPath: String): String = withContext(Dispatchers.IO) {
+        // 1. Make sure the ASR model is available
+        if (!ASRService.isModelDownloaded(context)) {
+            return@withContext "⬇ ASR model not downloaded.\n" +
+                "Go to Settings → AI Models and download \"Sherpa-ONNX Small English\" (~40 MB)."
+        }
+
+        // 2. Transcribe
+        val file = java.io.File(audioPath)
+        if (!file.exists()) {
+            return@withContext "Audio file not found — it may have been deleted."
+        }
+
+        Log.d(TAG, "Audio Scribe: transcribing ${file.name}")
+        val transcript = asrService.transcribeFile(file)
+        if (transcript.isNullOrBlank()) {
+            return@withContext "Could not transcribe the audio. " +
+                "The recording may be too short or the speech unclear."
+        }
+
+        Log.d(TAG, "Audio Scribe transcript: $transcript")
+
+        // 3. If LLM is not ready, return raw transcript only
+        if (!aiManager.isAIReady()) {
+            aiManager.autoEnableIfModelReady()
+        }
+        if (!aiManager.isAIReady()) {
+            return@withContext "TRANSCRIPT\n$transcript\n\n" +
+                "(LLM not loaded — download a model for full analysis.)"
+        }
+
+        // 4. Run through Gemma with AUDIO_SCRIBE task config
+        return@withContext processMessage(
+            message = "Field audio transcript:\n\n\"$transcript\"",
+            taskConfig = TaskConfig.AUDIO_SCRIBE
+        )
     }
 
     /**

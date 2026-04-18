@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -22,6 +24,13 @@ android {
         vectorDrawables {
             useSupportLibrary = true
         }
+
+        // Nexa SDK token — read from local.properties (gitignored), never hardcoded
+        val localProperties = Properties().also { props ->
+            val f = rootProject.file("local.properties")
+            if (f.exists()) f.inputStream().use { props.load(it) }
+        }
+        buildConfigField("String", "NEXA_TOKEN", "\"${localProperties["NEXA_TOKEN"] ?: ""}\"")
     }
 
     dependenciesInfo {
@@ -29,6 +38,15 @@ android {
         includeInApk = false
         // Disables dependency metadata when building Android App Bundles.
         includeInBundle = false
+    }
+
+    splits {
+        abi {
+            isEnable = true
+            reset()
+            include("arm64-v8a", "x86_64") // arm64-v8a = real devices, x86_64 = emulator
+            isUniversalApk = false
+        }
     }
 
     buildTypes {
@@ -50,6 +68,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
     packaging {
         resources {
@@ -57,6 +76,12 @@ android {
         }
         jniLibs {
             useLegacyPackaging = true  // Required for Nexa SDK native libs
+            pickFirsts += setOf(
+                "lib/arm64-v8a/libonnxruntime.so",
+                "lib/armeabi-v7a/libonnxruntime.so",
+                "lib/x86/libonnxruntime.so",
+                "lib/x86_64/libonnxruntime.so"
+            )
         }
     }
     lint {
@@ -106,6 +131,9 @@ dependencies {
     // Google Play Services Location
     implementation(libs.gms.location)
 
+    // ExifInterface for photo metadata
+    implementation("androidx.exifinterface:exifinterface:1.3.7")
+
     // Security preferences
     implementation(libs.androidx.security.crypto)
 
@@ -114,7 +142,7 @@ dependencies {
     // ============================================
 
     // Nexa AI SDK (LLM inference)
-    implementation("ai.nexa:core:0.0.3")
+    implementation("ai.nexa:core:0.0.22")
 
     // Sherpa-ONNX ASR (Speech Recognition - replaces VOSK)
     // Maven artifact with Android-specific packaging (includes JNI libraries)

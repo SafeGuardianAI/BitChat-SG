@@ -25,10 +25,13 @@ class AIManager(private val context: Context) {
     }
     
     val preferences = AIPreferences(context)
-    val aiService: AIService = DefaultAIService()
+    val aiService: AIService = NexaLlmService(context)
     val modelManager = ModelManager(context)
     val conversationContext = ConversationContext(context)
-    
+    val ttsService = TTSService(context)
+    val disasterTtsService = DisasterTTSService(ttsService, preferences)
+    val deviceCapability = DeviceCapabilityService.getInstance(context)
+
     private val rerankerService = RerankerService(context, preferences)
     private val ragService = RAGService(context, preferences, rerankerService)
     private val documentManager = RAGDocumentManager(context)
@@ -48,10 +51,84 @@ class AIManager(private val context: Context) {
     }
     
     fun isAIReady(): Boolean = initialized && preferences.aiEnabled
+
+    /**
+     * Auto-enable AI if a model is downloaded. Call on app startup
+     * so users don't need to run /ai on manually.
+     */
+    suspend fun autoEnableIfModelReady(): Boolean = withContext(Dispatchers.IO) {
+        // Try the richer AIModel path first (NPU-aware); fall back to basic ModelInfo
+        val aiModel = preferences.getSelectedAIModel()
+        val simpleModel = preferences.getSelectedLLMModel()
+
+        val isReady = when {
+            aiModel != null -> {
+                val info = ModelInfo(
+                    id = aiModel.id, name = aiModel.name,
+                    fileSizeMB = aiModel.fileSizeMB, downloadUrl = aiModel.downloadUrl
+                )
+                modelManager.isModelDownloaded(info)
+            }
+            simpleModel != null -> modelManager.isModelDownloaded(simpleModel)
+            else -> false
+        }
+
+        if (isReady) {
+            if (!initialized) initialize()
+            if (!aiService.isModelLoaded()) {
+                if (aiModel != null) {
+                    val cap = deviceCapability.getCapability()
+                    aiService.loadAIModel(aiModel, cap.socInfo.qnnTier)
+                } else if (simpleModel != null) {
+                    aiService.loadModel(simpleModel)
+                }
+            }
+            preferences.aiEnabled = true
+            val name = aiModel?.name ?: simpleModel?.name ?: "unknown"
+            Log.d(TAG, "Auto-enabled AI with model: $name")
+            true
+        } else {
+            false
+        }
+    }
     
     fun isRAGReady(): Boolean = ragService.isReady()
-    
+
     fun isRerankerReady(): Boolean = rerankerService.isReady()
+
+    /**
+     * Feature availability based on device tier + AI state.
+     *
+     * Gallery pattern: explicitly show which features are available on the current hardware
+     * instead of silently failing. Responders need to know their AI capability before
+     * they rely on it.
+     */
+    data class FeatureSet(
+        val llmAvailable: Boolean,
+        val ragAvailable: Boolean,
+        val ttsAvailable: Boolean,
+        val npuAvailable: Boolean,
+        val tier: DeviceCapabilityService.DeviceTier,
+        val degradationReason: String?   // non-null when features are limited
+    )
+
+    suspend fun getAvailableFeatures(): FeatureSet {
+        val cap = deviceCapability.getCapability()
+        val degraded = cap.tier == DeviceCapabilityService.DeviceTier.LOW
+        return FeatureSet(
+            llmAvailable     = isAIReady() && !degraded,
+            ragAvailable     = isRAGReady() && !degraded,
+            ttsAvailable     = preferences.ttsEnabled,
+            npuAvailable     = cap.supportsNPU,
+            tier             = cap.tier,
+            degradationReason = when {
+                degraded && !isAIReady()  -> "Low RAM device — AI disabled to preserve stability"
+                degraded                  -> "Low RAM device — some AI features may be slow"
+                !isAIReady()              -> null
+                else                      -> null
+            }
+        )
+    }
     
     fun getStatus(): AIStatus = AIStatus(
         isReady = isAIReady(),
@@ -68,15 +145,24 @@ class AIManager(private val context: Context) {
     
     suspend fun enableAI(): Result<Unit> = withContext(Dispatchers.IO) {
         try {
-            if (!initialized) {
-                initialize()
+            if (!initialized) initialize()
+
+            val aiModel = preferences.getSelectedAIModel()
+            val simpleModel = preferences.getSelectedLLMModel()
+
+            if (aiModel != null) {
+                val info = ModelInfo(
+                    id = aiModel.id, name = aiModel.name,
+                    fileSizeMB = aiModel.fileSizeMB, downloadUrl = aiModel.downloadUrl
+                )
+                if (modelManager.isModelDownloaded(info)) {
+                    val cap = deviceCapability.getCapability()
+                    aiService.loadAIModel(aiModel, cap.socInfo.qnnTier)
+                }
+            } else if (simpleModel != null && modelManager.isModelDownloaded(simpleModel)) {
+                aiService.loadModel(simpleModel)
             }
-            
-            val model = preferences.getSelectedLLMModel()
-            if (model != null && modelManager.isModelDownloaded(model)) {
-                aiService.loadModel(model)
-            }
-            
+
             preferences.aiEnabled = true
             Log.d(TAG, "AI enabled")
             Result.success(Unit)

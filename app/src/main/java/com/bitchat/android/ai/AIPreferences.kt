@@ -44,12 +44,33 @@ class AIPreferences(context: Context) {
         ) { StructuredOutputMode.OFF }
         set(value) = prefs.edit().putInt(KEY_STRUCTURED_OUTPUT_MODE, value.ordinal).apply()
     
+    var aiHostingEnabled: Boolean
+        get() = prefs.getBoolean(KEY_AI_HOSTING_ENABLED, false)
+        set(value) = prefs.edit().putBoolean(KEY_AI_HOSTING_ENABLED, value).apply()
+
+    var aiMessageSharingEnabled: Boolean
+        get() = prefs.getBoolean(KEY_AI_MESSAGE_SHARING_ENABLED, false)
+        set(value) = prefs.edit().putBoolean(KEY_AI_MESSAGE_SHARING_ENABLED, value).apply()
+
+    var disasterModeEnabled: Boolean
+        get() = prefs.getBoolean(KEY_DISASTER_MODE_ENABLED, false)
+        set(value) = prefs.edit().putBoolean(KEY_DISASTER_MODE_ENABLED, value).apply()
+
     var selectedLLMModel: String
         get() = prefs.getString(KEY_SELECTED_LLM_MODEL, "qwen2.5-0.5b") ?: "qwen2.5-0.5b"
         set(value) = prefs.edit().putString(KEY_SELECTED_LLM_MODEL, value).apply()
     
     fun getSelectedLLMModel(): ModelInfo? {
         return ModelCatalog.getModelById(selectedLLMModel)
+    }
+
+    /**
+     * Returns the richer [AIModel] from [AIModelCatalog] for the selected model ID.
+     * Used when NPU plugin selection or dependency resolution is needed.
+     * Falls back to null if the ID is only in the basic [ModelCatalog].
+     */
+    fun getSelectedAIModel(): AIModel? {
+        return AIModelCatalog.getModelById(selectedLLMModel)
     }
     
     fun getSelectedRerankerModel(): ModelInfo? {
@@ -73,5 +94,8 @@ class AIPreferences(context: Context) {
         private const val KEY_STRUCTURED_OUTPUT = "structured_output"
         private const val KEY_STRUCTURED_OUTPUT_MODE = "structured_output_mode"
         private const val KEY_SELECTED_LLM_MODEL = "selected_llm_model"
+        private const val KEY_AI_HOSTING_ENABLED = "ai_hosting_enabled"
+        private const val KEY_AI_MESSAGE_SHARING_ENABLED = "ai_message_sharing_enabled"
+        private const val KEY_DISASTER_MODE_ENABLED = "disaster_mode_enabled"
     }
 }
