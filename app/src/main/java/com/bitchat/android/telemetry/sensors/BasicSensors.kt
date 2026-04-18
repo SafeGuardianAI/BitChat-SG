@@ -13,12 +13,15 @@ import android.location.LocationListener
 import android.location.LocationManager
 import android.os.BatteryManager
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.*
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.atomic.AtomicReference
+import kotlin.math.pow
 import kotlin.math.round
 
 /**
@@ -186,195 +189,231 @@ class BatterySensor(private val context: Context) : BaseSensor(SensorID.BATTERY,
 }
 
 /**
- * Location Sensor
+ * Location Sensor — adaptive GPS polling with last-known caching.
+ *
+ * When the device hasn't moved more than [STATIONARY_DIST_M] metres in
+ * [STATIONARY_TIME_MS] milliseconds the GPS is switched to a passive / low-power
+ * mode (5-minute update interval + 50 m threshold) and the last-known fix is
+ * served from cache.  This saves ~25 mA of continuous GPS drain.
+ *
+ * When movement is detected the sensor switches back to normal mode
+ * (15-second / 4-metre updates) automatically.
  */
 class LocationSensor(
     private val context: Context,
     private val locationTelemeter: Telemeter
 ) : BaseSensor(SensorID.LOCATION, "location", 15000L), LocationListener {
-    
+
     companion object {
-        private const val MIN_DISTANCE = 4.0f // meters
-        private const val ACCURACY_TARGET = 250.0f // meters
+        private const val TAG = "LocationSensor"
+        // Normal (moving) mode
+        private const val MOVING_MIN_TIME_MS  = 15_000L  // 15 s
+        private const val MOVING_MIN_DIST_M   = 4.0f     // 4 m
+        // Stationary (cached) mode
+        private const val STATIC_MIN_TIME_MS  = 300_000L // 5 min
+        private const val STATIC_MIN_DIST_M   = 50.0f    // 50 m
+        // Thresholds to decide "stationary"
+        private const val STATIONARY_DIST_M   = 50.0f    // displacement < 50 m → stationary
+        private const val STATIONARY_TIME_MS  = 5 * 60 * 1000L  // for 5 minutes
+        private const val ACCURACY_TARGET     = 250.0f
     }
-    
+
     private var locationManager: LocationManager? = null
     private var locationData: LocationData? = null
     private var lastRawLocation: Location? = null
-    
+
+    // Stationary tracking
+    private var anchorLocation: Location? = null   // position at start of current still period
+    private var anchorTimeMs:  Long = 0L
+    private var isStationary = false
+
     override fun setupSensor() {
         if (!checkPermissions()) {
-            Log.w("LocationSensor", "Location permissions not granted")
+            Log.w(TAG, "Location permissions not granted")
             return
         }
-        
         locationManager = context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
-        
-        try {
-            val providers = locationManager?.getProviders(true) ?: emptyList()
-            val bestProvider = locationManager?.getBestProvider(
-                android.location.Criteria().apply {
-                    accuracy = android.location.Criteria.ACCURACY_FINE
-                    isAltitudeRequired = true
-                },
-                true
-            )
-            
-            if (bestProvider != null) {
-                locationManager?.requestLocationUpdates(
-                    bestProvider,
-                    staleTime,
-                    MIN_DISTANCE,
-                    this
-                )
-            }
-        } catch (e: SecurityException) {
-            Log.e("LocationSensor", "Error requesting location updates", e)
-        }
-        
+
+        // Seed with best last-known fix before requesting updates
+        val lastKnown = locationManager?.getLastKnownLocation(LocationManager.GPS_PROVIDER)
+            ?: locationManager?.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
+            ?: (if (android.os.Build.VERSION.SDK_INT >= 31)
+                    locationManager?.getLastKnownLocation(LocationManager.FUSED_PROVIDER) else null)
+        if (lastKnown != null) lastRawLocation = lastKnown
+
+        requestUpdates(stationary = false)
+        anchorLocation = lastRawLocation
+        anchorTimeMs   = System.currentTimeMillis()
         updateData()
     }
-    
+
     override fun teardownSensor() {
         locationManager?.removeUpdates(this)
         locationManager = null
         locationData = null
         lastRawLocation = null
+        anchorLocation = null
+        isStationary = false
     }
-    
+
     override fun updateData() {
-        if (synthesized) {
-            // Handle synthesized location data
-            if (locationData != null) {
-                lastUpdate = System.currentTimeMillis()
-                return
-            }
-        }
-        
-        if (lastRawLocation != null) {
-            val location = lastRawLocation!!
-            if (location.accuracy <= ACCURACY_TARGET) {
-                locationData = LocationData(
-                    latitude = round(location.latitude * 1e6) / 1e6,
-                    longitude = round(location.longitude * 1e6) / 1e6,
-                    altitude = (round(location.altitude * 100) / 100).toFloat(),
-                    speed = (round(location.speed * 3.6f * 100) / 100).toFloat(), // Convert m/s to km/h
-                    bearing = (round(location.bearing * 100) / 100).toFloat(),
-                    accuracy = (round(location.accuracy * 100) / 100).toFloat(),
-                    lastUpdate = location.time / 1000
-                )
-                lastUpdate = System.currentTimeMillis()
-            }
-        }
+        if (synthesized) { if (locationData != null) lastUpdate = System.currentTimeMillis(); return }
+        val loc = lastRawLocation ?: return
+        if (loc.accuracy > ACCURACY_TARGET) return
+        locationData = LocationData(
+            latitude   = round(loc.latitude  * 1e6) / 1e6,
+            longitude  = round(loc.longitude * 1e6) / 1e6,
+            altitude   = (round(loc.altitude * 100) / 100).toFloat(),
+            speed      = (round(loc.speed * 3.6f * 100) / 100).toFloat(),
+            bearing    = (round(loc.bearing * 100) / 100).toFloat(),
+            accuracy   = (round(loc.accuracy * 100) / 100).toFloat(),
+            lastUpdate = loc.time / 1000
+        )
+        lastUpdate = System.currentTimeMillis()
     }
-    
+
     override fun getSensorData(): Any? = locationData
-    
+
+    // ── LocationListener ──────────────────────────────────────────────────────
     override fun onLocationChanged(location: Location) {
         lastRawLocation = location
         updateData()
+        evaluateMotion(location)
     }
-    
+
     override fun onProviderEnabled(provider: String) {}
     override fun onProviderDisabled(provider: String) {}
-    override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) {}
-    
-    private fun checkPermissions(): Boolean {
-        return locationTelemeter.checkPermission("ACCESS_COARSE_LOCATION") &&
-               locationTelemeter.checkPermission("ACCESS_FINE_LOCATION")
-    }
-    
-    override fun packData(data: Any): ByteArray {
-        val locationData = data as LocationData
-        val output = java.io.ByteArrayOutputStream()
-        val dos = java.io.DataOutputStream(output)
-        dos.writeInt((locationData.latitude * 1e6).toInt())
-        dos.writeInt((locationData.longitude * 1e6).toInt())
-        dos.writeInt((locationData.altitude * 1e2).toInt())
-        dos.writeInt((locationData.speed * 1e2).toInt())
-        dos.writeInt((locationData.bearing * 1e2).toInt())
-        dos.writeShort((locationData.accuracy * 1e2).toInt())
-        dos.writeLong(locationData.lastUpdate)
-        return output.toByteArray()
-    }
-    
-    override fun unpackData(packed: ByteArray): Any {
-        val dis = java.io.DataInputStream(packed.inputStream())
-        val latitudeVal = dis.readInt() / 1e6
-        val longitudeVal = dis.readInt() / 1e6
-        val altitudeVal = (dis.readInt() / 1e2).toFloat()
-        val speedVal = (dis.readInt() / 1e2).toFloat()
-        val bearingVal = (dis.readInt() / 1e2).toFloat()
-        val accuracyVal = (dis.readShort() / 1e2).toFloat()
-        val lastUpdateVal = dis.readLong()
-        locationData = LocationData(
-            latitude = latitudeVal,
-            longitude = longitudeVal,
-            altitude = altitudeVal,
-            speed = speedVal,
-            bearing = bearingVal,
-            accuracy = accuracyVal,
-            lastUpdate = lastUpdateVal
-        )
-        synthesized = true
-        lastUpdate = System.currentTimeMillis()
-        return locationData!!
-    }
-    
-    override fun render(relativeTo: Telemeter?): Map<String, Any>? {
-        val data = locationData ?: return null
-        
-        val values = mutableMapOf<String, Any>(
-            "latitude" to data.latitude,
-            "longitude" to data.longitude,
-            "altitude" to data.altitude,
-            "speed" to data.speed,
-            "heading" to data.bearing,
-            "accuracy" to data.accuracy,
-            "updated" to data.lastUpdate
-        )
-        
-        // Add relative calculations if relativeTo is provided
-        if (relativeTo != null) {
-            val relativeLocation = relativeTo.read("location") as? LocationData
-            if (relativeLocation != null) {
-                val distance = calculateDistance(
-                    data.latitude, data.longitude,
-                    relativeLocation.latitude, relativeLocation.longitude
-                )
-                values["distance"] = mapOf(
-                    "orthodromic" to distance,
-                    "euclidian" to distance // Simplified
-                )
+    @Suppress("OVERRIDE_DEPRECATION")
+    override fun onStatusChanged(provider: String?, status: Int, extras: android.os.Bundle?) {}
+
+    // ── Adaptive GPS ──────────────────────────────────────────────────────────
+
+    /**
+     * Compare current fix to the anchor.  If displacement < STATIONARY_DIST_M
+     * for STATIONARY_TIME_MS → switch to slow-poll mode (saves ~25 mA).
+     * If the person moves > STATIONARY_DIST_M → re-anchor and switch back.
+     */
+    private fun evaluateMotion(location: Location) {
+        val anchor = anchorLocation
+        if (anchor == null) {
+            anchorLocation = location
+            anchorTimeMs   = location.time
+            return
+        }
+
+        val dist = anchor.distanceTo(location)
+
+        if (dist > STATIONARY_DIST_M) {
+            // Moved significantly — reset anchor, ensure fast updates
+            anchorLocation = location
+            anchorTimeMs   = location.time
+            if (isStationary) {
+                isStationary = false
+                requestUpdates(stationary = false)
+                Log.d(TAG, "GPS: movement detected (${dist.toInt()} m) → normal mode")
+            }
+        } else {
+            val stillMs = location.time - anchorTimeMs
+            if (!isStationary && stillMs >= STATIONARY_TIME_MS) {
+                isStationary = true
+                requestUpdates(stationary = true)
+                Log.d(TAG, "GPS: stationary for ${stillMs / 60000} min → low-power mode")
             }
         }
-        
-        return mapOf(
-            "icon" to "map-marker",
-            "name" to "Location",
-            "values" to values
+    }
+
+    private fun requestUpdates(stationary: Boolean) {
+        locationManager?.removeUpdates(this)
+        val provider = chooseBestProvider() ?: return
+        val minTime = if (stationary) STATIC_MIN_TIME_MS else MOVING_MIN_TIME_MS
+        val minDist = if (stationary) STATIC_MIN_DIST_M  else MOVING_MIN_DIST_M
+        try {
+            Handler(Looper.getMainLooper()).post {
+                try {
+                    locationManager?.requestLocationUpdates(provider, minTime, minDist, this)
+                } catch (e: SecurityException) {
+                    Log.e(TAG, "requestUpdates failed", e)
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "requestUpdates outer failed", e)
+        }
+    }
+
+    private fun chooseBestProvider(): String? {
+        val criteria = android.location.Criteria().apply {
+            accuracy = android.location.Criteria.ACCURACY_FINE
+            isAltitudeRequired = true
+        }
+        return locationManager?.getBestProvider(criteria, true)
+    }
+
+    private fun checkPermissions(): Boolean =
+        locationTelemeter.checkPermission("ACCESS_COARSE_LOCATION") &&
+        locationTelemeter.checkPermission("ACCESS_FINE_LOCATION")
+
+    // ── Pack / unpack ─────────────────────────────────────────────────────────
+    override fun packData(data: Any): ByteArray {
+        val d = data as LocationData
+        val output = java.io.ByteArrayOutputStream()
+        val dos = java.io.DataOutputStream(output)
+        dos.writeInt((d.latitude  * 1e6).toInt())
+        dos.writeInt((d.longitude * 1e6).toInt())
+        dos.writeInt((d.altitude  * 1e2).toInt())
+        dos.writeInt((d.speed     * 1e2).toInt())
+        dos.writeInt((d.bearing   * 1e2).toInt())
+        dos.writeShort((d.accuracy * 1e2).toInt())
+        dos.writeLong(d.lastUpdate)
+        return output.toByteArray()
+    }
+
+    override fun unpackData(packed: ByteArray): Any {
+        val dis = java.io.DataInputStream(packed.inputStream())
+        locationData = LocationData(
+            latitude   = dis.readInt() / 1e6,
+            longitude  = dis.readInt() / 1e6,
+            altitude   = (dis.readInt() / 1e2).toFloat(),
+            speed      = (dis.readInt() / 1e2).toFloat(),
+            bearing    = (dis.readInt() / 1e2).toFloat(),
+            accuracy   = (dis.readShort() / 1e2).toFloat(),
+            lastUpdate = dis.readLong()
         )
+        synthesized = true; lastUpdate = System.currentTimeMillis()
+        return locationData!!
     }
-    
+
+    override fun render(relativeTo: Telemeter?): Map<String, Any>? {
+        val d = locationData ?: return null
+        val values = mutableMapOf<String, Any>(
+            "latitude"  to d.latitude,  "longitude" to d.longitude,
+            "altitude"  to d.altitude,  "speed"     to d.speed,
+            "heading"   to d.bearing,   "accuracy"  to d.accuracy,
+            "updated"   to d.lastUpdate,
+            "mode"      to if (isStationary) "cached" else "live"
+        )
+        if (relativeTo != null) {
+            val rel = relativeTo.read("location") as? LocationData
+            if (rel != null) {
+                val dist = calculateDistance(d.latitude, d.longitude, rel.latitude, rel.longitude)
+                values["distance"] = mapOf("orthodromic" to dist, "euclidian" to dist)
+            }
+        }
+        return mapOf("icon" to "map-marker", "name" to "Location", "values" to values)
+    }
+
     private fun calculateDistance(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
-        // Haversine formula for great circle distance
-        val R = 6371000.0 // Earth radius in meters
-        val dLat = Math.toRadians(lat2 - lat1)
-        val dLon = Math.toRadians(lon2 - lon1)
-        val a = kotlin.math.sin(dLat / 2) * kotlin.math.sin(dLat / 2) +
+        val R = 6371000.0
+        val dLat = Math.toRadians(lat2 - lat1); val dLon = Math.toRadians(lon2 - lon1)
+        val a = kotlin.math.sin(dLat/2).pow(2) +
                 kotlin.math.cos(Math.toRadians(lat1)) * kotlin.math.cos(Math.toRadians(lat2)) *
-                kotlin.math.sin(dLon / 2) * kotlin.math.sin(dLon / 2)
-        val c = 2 * kotlin.math.atan2(kotlin.math.sqrt(a), kotlin.math.sqrt(1 - a))
-        return R * c
+                kotlin.math.sin(dLon/2).pow(2)
+        return R * 2 * kotlin.math.atan2(kotlin.math.sqrt(a), kotlin.math.sqrt(1 - a))
     }
-    
+
     data class LocationData(
-        val latitude: Double,
-        val longitude: Double,
-        val altitude: Float,
-        val speed: Float,
-        val bearing: Float,
-        val accuracy: Float,
+        val latitude: Double, val longitude: Double,
+        val altitude: Float,  val speed: Float,
+        val bearing: Float,   val accuracy: Float,
         val lastUpdate: Long
     )
 }

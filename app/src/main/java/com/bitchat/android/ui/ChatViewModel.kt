@@ -86,7 +86,11 @@ class ChatViewModel(
         coroutineScope = viewModelScope,
         onHapticFeedback = { ChatViewModelUtils.triggerHapticFeedback(application.applicationContext) },
         getMyPeerID = { meshService.myPeerID },
-        getMeshService = { meshService }
+        getMeshService = { meshService },
+        onIncomingMessage = { msg ->
+            com.bitchat.android.ai.AIManager.getInstance(application.applicationContext)
+                .disasterTtsService.processIncomingMessage(msg)
+        }
     )
     
     // New Geohash architecture ViewModel (replaces God object service usage in UI path)
@@ -242,10 +246,30 @@ class ChatViewModel(
         }
 
         // BLE receives are inserted by MessageHandler path; no VoiceNoteBus for Tor in this branch.
+
+        // Wire fall-detection alerts into the local chat feed
+        viewModelScope.launch {
+            try {
+                val agent = com.bitchat.android.telemetry.TelemetryAgent
+                    .getInstance(getApplication())
+                agent.onLocalAlert = { msg -> messageManager.addMessage(msg) }
+                agent.enableSensor("acceleration")
+                agent.startFallMonitoring()
+                Log.d(TAG, "Fall monitoring started")
+            } catch (e: Exception) {
+                Log.w(TAG, "Fall monitoring setup failed (non-fatal): ${e.message}")
+            }
+        }
     }
     
     override fun onCleared() {
         super.onCleared()
+        // Stop fall monitoring and clear the local alert callback
+        try {
+            val agent = com.bitchat.android.telemetry.TelemetryAgent.getInstance(getApplication())
+            agent.stopFallMonitoring()
+            agent.onLocalAlert = null
+        } catch (_: Exception) { }
         // Note: Mesh service lifecycle is now managed by MainActivity
     }
     

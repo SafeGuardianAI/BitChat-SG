@@ -537,86 +537,253 @@ class AngularVelocitySensor(private val context: Context) : BaseSensor(SensorID.
 }
 
 /**
- * Acceleration Sensor
+ * Fall event emitted when the 3-phase heuristic detects a fall + prolonged stillness.
  */
-class AccelerationSensor(private val context: Context) : BaseSensor(SensorID.ACCELERATION, "acceleration", 1000L),
-    SensorEventListener {
-    
+data class FallEvent(
+    val detectedAtMs: Long,
+    val peakImpactG: Float,
+    val stillnessDurationMs: Long
+)
+
+/**
+ * Acceleration Sensor — Tier 1 + Tier 2 power-aware fall detection.
+ *
+ * Power tiers:
+ *   Tier 1 — TYPE_SIGNIFICANT_MOTION (hardware DSP, ~0.2 mA): tracks last-motion
+ *             timestamp, cancels post-fall stillness confirmation if the person moves.
+ *   Tier 2 — FIFO batching at 50 Hz with 1-second max report latency (~2 mA):
+ *             CPU wakes once/second, processes a burst of ~50 samples, then sleeps.
+ *
+ * Fall state machine (runs on each batched sample):
+ *   IDLE → FREEFALL  when |g| < 4.9 m/s² (0.5 g) for 80–400 ms
+ *   FREEFALL → POST_IMPACT  when |g| > 24.5 m/s² (2.5 g) for ≥ 50 ms
+ *   POST_IMPACT → CONFIRMING  when |g| ≈ 9.8 m/s² with low variance for ≥ 2 s
+ *   CONFIRMING → FALL_CONFIRMED  after 45 s of continued stillness
+ *
+ * Observers should collect [fallEvents] and dispatch alerts.
+ */
+class AccelerationSensor(private val context: Context) :
+    BaseSensor(SensorID.ACCELERATION, "acceleration", 1000L), SensorEventListener {
+
+    companion object {
+        private const val FREEFALL_THRESHOLD  = 4.9f   // m/s² (~0.5 g)
+        private const val IMPACT_THRESHOLD    = 24.5f  // m/s² (~2.5 g)
+        private const val FREEFALL_MIN_NS     =  80_000_000L  // 80 ms
+        private const val FREEFALL_MAX_NS     = 400_000_000L  // 400 ms
+        private const val IMPACT_MIN_NS       =  50_000_000L  // 50 ms
+        private const val STILL_VARIANCE_MAX  = 0.8f   // m/s² std-dev → "still"
+        private const val STILL_CONFIRM_MS    = 45_000L // confirm fall after 45 s still
+        private const val BUFFER_SECONDS      = 10     // circular buffer length
+        private const val SAMPLE_RATE_HZ      = 50
+        private const val BUFFER_SIZE         = BUFFER_SECONDS * SAMPLE_RATE_HZ
+        // FIFO batch latency — CPU wakes once per second instead of 50×/s
+        private const val FIFO_LATENCY_US     = 1_000_000  // 1 second
+    }
+
+    // ── Hardware ─────────────────────────────────────────────────────────────
     private var sensorManager: SensorManager? = null
     private var accelerometerSensor: Sensor? = null
+    private var significantMotionSensor: Sensor? = null
+
+    // ── Fall state machine ────────────────────────────────────────────────────
+    private enum class FallState { IDLE, FREEFALL, POST_IMPACT, CONFIRMING }
+    @Volatile private var fallState = FallState.IDLE
+    private var freefallStartNs = 0L
+    private var impactStartNs   = 0L
+    private var impactPeakG     = 0f
+    private var stillStartMs    = 0L
+
+    /** Timestamp of last TYPE_SIGNIFICANT_MOTION trigger (ms since epoch). */
+    @Volatile var lastMotionAt: Long = System.currentTimeMillis()
+        private set
+
+    // Tier 1: TriggerEventListener (one-shot, re-registered on each trigger)
+    private val smListener = object : android.hardware.TriggerEventListener() {
+        override fun onTrigger(event: android.hardware.TriggerEvent) {
+            lastMotionAt = System.currentTimeMillis()
+            // Significant motion cancels post-fall stillness confirmation
+            if (fallState == FallState.CONFIRMING || fallState == FallState.POST_IMPACT) {
+                fallState = FallState.IDLE
+            }
+            // Re-register — TYPE_SIGNIFICANT_MOTION is one-shot
+            significantMotionSensor?.let { sensorManager?.requestTriggerSensor(this, it) }
+        }
+    }
+
+    // ── Circular buffer (Tier 2) ──────────────────────────────────────────────
+    private val bufTimes = LongArray(BUFFER_SIZE)  // nanoseconds (event timestamp)
+    private val bufMags  = FloatArray(BUFFER_SIZE) // |g| in m/s²
+    private var bufHead  = 0
+    private var bufCount = 0
+
+    // ── Output ───────────────────────────────────────────────────────────────
+    private val _fallEvents = kotlinx.coroutines.flow.MutableStateFlow<FallEvent?>(null)
+    val fallEvents: kotlinx.coroutines.flow.StateFlow<FallEvent?> get() = _fallEvents
+
     private var accelerationData: AccelerationData? = null
-    
+
+    // ── BaseSensor lifecycle ──────────────────────────────────────────────────
     override fun setupSensor() {
         sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
         accelerometerSensor = sensorManager?.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
-        
-        if (accelerometerSensor != null) {
-            sensorManager?.registerListener(this, accelerometerSensor, SensorManager.SENSOR_DELAY_NORMAL)
+
+        // Tier 2: FIFO-batched 50 Hz — maxReportLatencyUs = 1 s → CPU wakes 1×/s not 50×/s
+        accelerometerSensor?.let {
+            sensorManager?.registerListener(
+                this, it,
+                20_000,          // samplingPeriodUs = 50 Hz
+                FIFO_LATENCY_US  // maxReportLatencyUs = 1 s batch
+            )
         }
+
+        // Tier 1: hardware significant-motion (DSP, ~0.2 mA, one-shot)
+        significantMotionSensor = sensorManager?.getDefaultSensor(Sensor.TYPE_SIGNIFICANT_MOTION)
+        significantMotionSensor?.let { sensorManager?.requestTriggerSensor(smListener, it) }
+
+        lastMotionAt = System.currentTimeMillis()
         updateData()
     }
-    
+
     override fun teardownSensor() {
         sensorManager?.unregisterListener(this)
+        significantMotionSensor?.let { sensorManager?.cancelTriggerSensor(smListener, it) }
         sensorManager = null
         accelerometerSensor = null
-        accelerationData = null
+        significantMotionSensor = null
+        fallState = FallState.IDLE
     }
-    
-    override fun updateData() {
-        // Data updated via onSensorChanged
-    }
-    
+
+    override fun updateData() { /* driven by onSensorChanged */ }
+
+    override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
+
     override fun onSensorChanged(event: SensorEvent?) {
-        if (event?.sensor?.type == Sensor.TYPE_ACCELEROMETER) {
-            accelerationData = AccelerationData(
-                x = round(event.values[0] * 1e6f) / 1e6f,
-                y = round(event.values[1] * 1e6f) / 1e6f,
-                z = round(event.values[2] * 1e6f) / 1e6f
-            )
-            lastUpdate = System.currentTimeMillis()
+        val e = event ?: return
+        if (e.sensor.type != Sensor.TYPE_ACCELEROMETER) return
+
+        val x = e.values[0]; val y = e.values[1]; val z = e.values[2]
+        val mag = kotlin.math.sqrt((x * x + y * y + z * z).toDouble()).toFloat()
+
+        // Write to circular buffer
+        bufTimes[bufHead] = e.timestamp
+        bufMags[bufHead]  = mag
+        bufHead = (bufHead + 1) % BUFFER_SIZE
+        if (bufCount < BUFFER_SIZE) bufCount++
+
+        // Update snapshot for pack()
+        accelerationData = AccelerationData(x, y, z, mag)
+        lastUpdate = System.currentTimeMillis()
+
+        runFallMachine(e.timestamp, mag)
+    }
+
+    // ── Fall state machine ────────────────────────────────────────────────────
+    private fun runFallMachine(tsNs: Long, mag: Float) {
+        when (fallState) {
+            FallState.IDLE -> {
+                if (mag < FREEFALL_THRESHOLD) {
+                    fallState = FallState.FREEFALL
+                    freefallStartNs = tsNs
+                }
+            }
+            FallState.FREEFALL -> {
+                val elapsed = tsNs - freefallStartNs
+                when {
+                    mag >= FREEFALL_THRESHOLD && elapsed >= FREEFALL_MIN_NS -> {
+                        // Low-g phase too short — not a fall
+                        fallState = FallState.IDLE
+                    }
+                    elapsed > FREEFALL_MAX_NS -> {
+                        // Low-g lasted too long — thrown/tossed, not a fall
+                        fallState = FallState.IDLE
+                    }
+                    mag > IMPACT_THRESHOLD -> {
+                        fallState    = FallState.POST_IMPACT
+                        impactStartNs = tsNs
+                        impactPeakG   = mag
+                    }
+                }
+            }
+            FallState.POST_IMPACT -> {
+                if (mag > impactPeakG) impactPeakG = mag
+                val elapsed = tsNs - impactStartNs
+                if (elapsed >= IMPACT_MIN_NS) {
+                    // Impact phase confirmed — now wait for stillness
+                    fallState    = FallState.CONFIRMING
+                    stillStartMs = System.currentTimeMillis()
+                }
+            }
+            FallState.CONFIRMING -> {
+                // Check recent variance — are we still?
+                val variance = recentVariance(windowMs = 2000)
+                if (variance > STILL_VARIANCE_MAX) {
+                    // Person moved — cancel
+                    fallState = FallState.IDLE
+                    return
+                }
+                val stillMs = System.currentTimeMillis() - stillStartMs
+                if (stillMs >= STILL_CONFIRM_MS) {
+                    // 45 s of stillness after impact — emit fall event
+                    _fallEvents.value = FallEvent(
+                        detectedAtMs      = System.currentTimeMillis(),
+                        peakImpactG       = impactPeakG / 9.8f,
+                        stillnessDurationMs = stillMs
+                    )
+                    fallState = FallState.IDLE  // reset, don't re-fire
+                }
+            }
         }
     }
-    
-    override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
-    
+
+    /** Returns the magnitude variance over the last [windowMs] milliseconds of buffer. */
+    private fun recentVariance(windowMs: Long): Float {
+        if (bufCount < 2) return 0f
+        val cutoffNs = (System.nanoTime() - windowMs * 1_000_000L)
+        var sum = 0.0; var sum2 = 0.0; var n = 0
+        // Walk buffer backwards (most recent first)
+        var idx = (bufHead - 1 + BUFFER_SIZE) % BUFFER_SIZE
+        repeat(bufCount) {
+            if (bufTimes[idx] >= cutoffNs) {
+                val v = bufMags[idx].toDouble()
+                sum += v; sum2 += v * v; n++
+            }
+            idx = (idx - 1 + BUFFER_SIZE) % BUFFER_SIZE
+        }
+        if (n < 2) return 0f
+        val mean = sum / n
+        return ((sum2 / n) - mean * mean).toFloat().coerceAtLeast(0f)
+    }
+
+    // ── BaseSensor pack/unpack/render ─────────────────────────────────────────
     override fun getSensorData(): Any? = accelerationData
-    
+
     override fun packData(data: Any): ByteArray {
-        val accelerationData = data as AccelerationData
-        val output = ByteArrayOutputStream()
-        val dos = DataOutputStream(output)
-        dos.writeFloat(accelerationData.x)
-        dos.writeFloat(accelerationData.y)
-        dos.writeFloat(accelerationData.z)
+        val d = data as AccelerationData
+        val output = java.io.ByteArrayOutputStream()
+        val dos = java.io.DataOutputStream(output)
+        dos.writeFloat(d.x); dos.writeFloat(d.y); dos.writeFloat(d.z)
         return output.toByteArray()
     }
-    
+
     override fun unpackData(packed: ByteArray): Any {
-        val dis = DataInputStream(packed.inputStream())
-        val x = dis.readFloat()
-        val y = dis.readFloat()
-        val z = dis.readFloat()
-        accelerationData = AccelerationData(x = x, y = y, z = z)
-        synthesized = true
-        lastUpdate = System.currentTimeMillis()
+        val dis = java.io.DataInputStream(packed.inputStream())
+        val x = dis.readFloat(); val y = dis.readFloat(); val z = dis.readFloat()
+        val mag = kotlin.math.sqrt((x*x + y*y + z*z).toDouble()).toFloat()
+        accelerationData = AccelerationData(x, y, z, mag)
+        synthesized = true; lastUpdate = System.currentTimeMillis()
         return accelerationData!!
     }
-    
+
     override fun render(relativeTo: Telemeter?): Map<String, Any>? {
-        val data = accelerationData ?: return null
+        val d = accelerationData ?: return null
         return mapOf(
             "icon" to "arrow-right-thick",
             "name" to "Acceleration",
-            "values" to mapOf(
-                "x" to data.x,
-                "y" to data.y,
-                "z" to data.z
-            )
+            "values" to mapOf("x" to d.x, "y" to d.y, "z" to d.z, "magnitude" to d.magnitude)
         )
     }
-    
-    data class AccelerationData(val x: Float, val y: Float, val z: Float)
+
+    data class AccelerationData(val x: Float, val y: Float, val z: Float, val magnitude: Float = 0f)
 }
 
 /**

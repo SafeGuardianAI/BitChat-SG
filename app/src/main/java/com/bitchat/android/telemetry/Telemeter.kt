@@ -53,6 +53,7 @@ object SensorID {
     const val RNS_TRANSPORT = 0x19
     const val LXMF_PROPAGATION = 0x18
     const val CONNECTION_MAP = 0x1A
+    const val CONNECTIVITY = 0x1B
     const val CUSTOM = 0xFF
 }
 
@@ -224,7 +225,8 @@ class Telemeter(
             "fuel" to { FuelSensor() },
             "rns_transport" to { RNSTransportSensor() },
             "lxmf_propagation" to { LXMFPropagationSensor() },
-            "connection_map" to { ConnectionMapSensor() }
+            "connection_map" to { ConnectionMapSensor() },
+            "connectivity" to { ConnectivitySensor(context) }
         )
     }
     
@@ -255,7 +257,8 @@ class Telemeter(
             "fuel" to SensorID.FUEL,
             "rns_transport" to SensorID.RNS_TRANSPORT,
             "lxmf_propagation" to SensorID.LXMF_PROPAGATION,
-            "connection_map" to SensorID.CONNECTION_MAP
+            "connection_map" to SensorID.CONNECTION_MAP,
+            "connectivity" to SensorID.CONNECTIVITY
         )
     }
     
@@ -330,6 +333,9 @@ class Telemeter(
             }
         }
     }
+
+    /** Returns the live sensor instance by name, or null if not enabled. */
+    fun getSensor(name: String): TelemetrySensor? = sensorMap[name]
     
     fun readAll(): Map<String, Any?> {
         val readings = mutableMapOf<String, Any?>()
