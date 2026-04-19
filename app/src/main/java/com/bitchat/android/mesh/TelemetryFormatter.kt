@@ -28,6 +28,23 @@ object TelemetryFormatter {
     private const val SID_LOCATION     = 0x02
     private const val SID_CONNECTIVITY = 0x1B
 
+    // Capability-bit labels — same order as ConnectivitySensor.render(). Bits
+    // 0..6 are radios/GPS and get their own fields; the rest get listed under
+    // "caps" so peers can see what hardware each node has.
+    private val CAP_LABELS = listOf(
+        "BLE", "BLE-Adv", "GPS", "Net-Loc", "WiFi-Direct", "WiFi-Aware",
+        "Internet", "Doze-Exempt", "Cam-Rear", "Cam-Front",
+        "Accel", "Gyro", "Baro", "Mag", "Light", "Proximity",
+        "TTS", "ASR", "Telephony", "SIM-Ready", "Charging"
+    )
+    // Bits already surfaced as first-class status fields; skip them in the
+    // "caps" tail to avoid duplication.
+    private val CAP_BITS_SUPPRESSED = setOf(0, 1, 2, 3, 4, 5, 6, 20)
+
+    private val THERMAL_LABELS = listOf(
+        "none", "light", "moderate", "severe", "critical", "emergency", "shutdown"
+    )
+
     /**
      * Returns a compact, plain-text status line, e.g.:
      *   "battery 78% · GPS ok · radio BLE ok WiFi down"
@@ -76,7 +93,8 @@ object TelemetryFormatter {
             buildStatusLine(
                 battery = null, charging = null,
                 hasGps = gpsOk,
-                bleOk = bleOk, wifiOk = null, internetOk = internetOk
+                bleOk = bleOk, wifiOk = null, internetOk = internetOk,
+                extraCaps = null, thermalStatus = null, apiLevel = null
             )
         } catch (_: Exception) { null }
     }
@@ -91,7 +109,13 @@ object TelemetryFormatter {
 
             var battery: Float? = null
             var charging: Boolean? = null
-            var hasGps = false
+            var hasGps: Boolean? = null
+            var bleOk: Boolean? = null
+            var wifiOk: Boolean? = null
+            var internetOk: Boolean? = null
+            var extraCaps: List<String>? = null
+            var thermalStatus: Int? = null
+            var apiLevel: Int? = null
 
             repeat(count) {
                 val sid      = dis.readInt()
@@ -108,7 +132,31 @@ object TelemetryFormatter {
                         // Any non-zero lat/lon means we have a GPS fix
                         val lat = inner.readInt()
                         val lon = inner.readInt()
-                        hasGps  = (lat != 0 || lon != 0)
+                        if (lat != 0 || lon != 0) hasGps = true
+                    }
+                    SID_CONNECTIVITY -> {
+                        // ConnectivitySensor wire format:
+                        //   [int caps][byte batt][byte thermal][byte api][long ts]
+                        // See CAP_LABELS for the bit->name mapping.
+                        val caps = inner.readInt()
+                        val batt = inner.readByte().toInt() and 0xFF
+                        val therm = inner.readByte().toInt()
+                        val api = inner.readByte().toInt() and 0xFF
+                        // timestamp unused for the status line
+
+                        bleOk      = (caps and (1 shl 0)) != 0
+                        internetOk = (caps and (1 shl 6)) != 0
+                        wifiOk     = (caps and (1 shl 4)) != 0 || (caps and (1 shl 5)) != 0
+                        if (hasGps == null) hasGps = (caps and (1 shl 2)) != 0
+                        if (battery == null && batt in 0..100) battery = batt.toFloat()
+                        if (charging == null) charging = (caps and (1 shl 20)) != 0
+
+                        // Everything else that's set → "caps" tail
+                        extraCaps = CAP_LABELS.withIndex()
+                            .filter { (i, _) -> i !in CAP_BITS_SUPPRESSED && (caps and (1 shl i)) != 0 }
+                            .map { it.value }
+                        thermalStatus = therm
+                        apiLevel = api
                     }
                     // Other sensors ignored for the status line
                 }
@@ -116,8 +164,11 @@ object TelemetryFormatter {
 
             buildStatusLine(
                 battery = battery, charging = charging,
-                hasGps = if (hasGps) true else null,
-                bleOk = null, wifiOk = null, internetOk = null
+                hasGps = hasGps,
+                bleOk = bleOk, wifiOk = wifiOk, internetOk = internetOk,
+                extraCaps = extraCaps,
+                thermalStatus = thermalStatus,
+                apiLevel = apiLevel
             )
         } catch (_: Exception) { null }
     }
@@ -130,7 +181,10 @@ object TelemetryFormatter {
         hasGps: Boolean?,
         bleOk: Boolean?,
         wifiOk: Boolean?,
-        internetOk: Boolean?
+        internetOk: Boolean?,
+        extraCaps: List<String>?,
+        thermalStatus: Int?,
+        apiLevel: Int?
     ): String {
         val parts = mutableListOf<String>()
 
@@ -153,6 +207,19 @@ object TelemetryFormatter {
             if (internetOk != null) add("Net ${if (internetOk) "ok" else "down"}")
         }
         if (radio.isNotEmpty()) parts += "radio ${radio.joinToString(" ")}"
+
+        if (!extraCaps.isNullOrEmpty()) {
+            parts += "caps ${extraCaps.joinToString(" ")}"
+        }
+
+        // Thermal status only worth surfacing when elevated (MODERATE+)
+        if (thermalStatus != null && thermalStatus >= 2 && thermalStatus < THERMAL_LABELS.size) {
+            parts += "thermal ${THERMAL_LABELS[thermalStatus]}"
+        }
+
+        if (apiLevel != null && apiLevel > 0) {
+            parts += "api $apiLevel"
+        }
 
         if (parts.isEmpty()) return "status received"
         return parts.joinToString(" · ")
