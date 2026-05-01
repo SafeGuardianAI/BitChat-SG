@@ -13,15 +13,20 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -32,6 +37,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.bitchat.android.standards.CAPSeverity
 
 /**
  * Compose screen that walks an elder user through the [LiteRuleTree] using
@@ -104,12 +110,19 @@ private fun ChooseScreen(
     onBack: () -> Unit,
     onExit: () -> Unit
 ) {
+    val inbox by CapAlertInbox.alerts.collectAsState()
+
     Column(
         modifier = Modifier
             .fillMaxSize()
             .padding(padding)
             .padding(horizontal = 16.dp, vertical = 12.dp)
     ) {
+        if (inbox.isNotEmpty() && node.id == "root") {
+            InboxBanner(entries = inbox, onClear = { CapAlertInbox.clear() })
+            Spacer(Modifier.height(8.dp))
+        }
+
         Text(
             text = node.title,
             fontSize = 26.sp,
@@ -212,6 +225,55 @@ private fun BigButton(text: String, isSos: Boolean, onClick: () -> Unit) {
                 text = text,
                 fontSize = 26.sp,
                 fontWeight = if (isSos) FontWeight.Bold else FontWeight.SemiBold
+            )
+        }
+    }
+}
+
+@Composable
+private fun InboxBanner(entries: List<CapAlertInbox.Entry>, onClear: () -> Unit) {
+    val top = entries.first()
+    val bg = when (top.severity) {
+        CAPSeverity.EXTREME -> Color(0xFFB00020)
+        CAPSeverity.SEVERE -> Color(0xFFD84315)
+        CAPSeverity.MODERATE -> Color(0xFFE65100)
+        CAPSeverity.MINOR -> Color(0xFF2E7D32)
+        CAPSeverity.UNKNOWN -> Color(0xFF455A64)
+    }
+    Card(
+        colors = CardDefaults.cardColors(containerColor = bg, contentColor = Color.White),
+        shape = RoundedCornerShape(16.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    text = "Alerts (${entries.size})",
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.weight(1f)
+                )
+                TextButton(onClick = onClear) {
+                    Text("Clear", color = Color.White, fontSize = 16.sp)
+                }
+            }
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = top.headline,
+                fontSize = 22.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+            if (top.description.isNotBlank()) {
+                Spacer(Modifier.height(4.dp))
+                Text(text = top.description, fontSize = 16.sp)
+            }
+            Spacer(Modifier.height(2.dp))
+            Text(
+                text = "From ${top.sender.take(12)} • ${top.severity.value}",
+                fontSize = 14.sp
             )
         }
     }

@@ -41,6 +41,7 @@ import com.bitchat.android.onboarding.PermissionManager
 import com.bitchat.android.ui.ChatScreen
 import com.bitchat.android.ui.ChatViewModel
 import com.bitchat.android.ui.lite.LiteAlertEmitter
+import com.bitchat.android.ui.lite.LiteModePreferences
 import com.bitchat.android.ui.lite.LiteModeScreen
 import com.bitchat.android.ui.theme.BitchatTheme
 import com.bitchat.android.nostr.PoWPreferenceManager
@@ -259,8 +260,11 @@ class MainActivity : ComponentActivity() {
                 onBackPressedDispatcher.addCallback(this, backCallback)
 
                 val capabilities = remember { DeviceTierDetector.detect(context) }
-                var forceFullMode by remember { mutableStateOf(false) }
-                val showLite = capabilities.tier == DeviceTier.LITE && !forceFullMode
+                val litePrefs = remember { LiteModePreferences(context) }
+                var forceFullMode by remember { mutableStateOf(litePrefs.forceFullMode) }
+                val forceLiteMode = remember { litePrefs.forceLiteMode }
+                val showLite = (capabilities.tier == DeviceTier.LITE || forceLiteMode)
+                    && !forceFullMode
 
                 if (showLite) {
                     val emitter = remember(meshService) {
@@ -268,7 +272,10 @@ class MainActivity : ComponentActivity() {
                     }
                     LiteModeScreen(
                         onConfirmOutcome = { outcome -> emitter.emit(outcome) },
-                        onExitLiteMode = { forceFullMode = true }
+                        onExitLiteMode = {
+                            litePrefs.forceFullMode = true
+                            forceFullMode = true
+                        }
                     )
                 } else {
                     ChatScreen(viewModel = chatViewModel)
