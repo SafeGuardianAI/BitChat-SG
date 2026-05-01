@@ -20,6 +20,8 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.Lifecycle
+import com.bitchat.android.device.DeviceTier
+import com.bitchat.android.device.DeviceTierDetector
 import com.bitchat.android.mesh.BluetoothMeshService
 import com.bitchat.android.onboarding.BluetoothCheckScreen
 import com.bitchat.android.onboarding.BluetoothStatus
@@ -38,6 +40,8 @@ import com.bitchat.android.onboarding.PermissionExplanationScreen
 import com.bitchat.android.onboarding.PermissionManager
 import com.bitchat.android.ui.ChatScreen
 import com.bitchat.android.ui.ChatViewModel
+import com.bitchat.android.ui.lite.LiteAlertEmitter
+import com.bitchat.android.ui.lite.LiteModeScreen
 import com.bitchat.android.ui.theme.BitchatTheme
 import com.bitchat.android.nostr.PoWPreferenceManager
 import kotlinx.coroutines.delay
@@ -253,7 +257,22 @@ class MainActivity : ComponentActivity() {
 
                 // Add the callback - this will be automatically removed when the activity is destroyed
                 onBackPressedDispatcher.addCallback(this, backCallback)
-                ChatScreen(viewModel = chatViewModel)
+
+                val capabilities = remember { DeviceTierDetector.detect(context) }
+                var forceFullMode by remember { mutableStateOf(false) }
+                val showLite = capabilities.tier == DeviceTier.LITE && !forceFullMode
+
+                if (showLite) {
+                    val emitter = remember(meshService) {
+                        LiteAlertEmitter(context, meshService, meshService.myPeerID)
+                    }
+                    LiteModeScreen(
+                        onConfirmOutcome = { outcome -> emitter.emit(outcome) },
+                        onExitLiteMode = { forceFullMode = true }
+                    )
+                } else {
+                    ChatScreen(viewModel = chatViewModel)
+                }
             }
             
             OnboardingState.ERROR -> {
