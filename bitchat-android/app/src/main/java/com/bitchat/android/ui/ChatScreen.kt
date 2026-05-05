@@ -33,7 +33,10 @@ import com.bitchat.android.model.BitchatMessage
  * - ChatUIUtils: Utility functions for formatting and colors
  */
 @Composable
-fun ChatScreen(viewModel: ChatViewModel) {
+fun ChatScreen(
+    viewModel: ChatViewModel,
+    onSwitchToLiteMode: () -> Unit = {}
+) {
     val colorScheme = MaterialTheme.colorScheme
     val messages by viewModel.messages.observeAsState(emptyList())
     val connectedPeers by viewModel.connectedPeers.observeAsState(emptyList())
@@ -327,7 +330,8 @@ fun ChatScreen(viewModel: ChatViewModel) {
         },
         selectedUserForSheet = selectedUserForSheet,
         selectedMessageForSheet = selectedMessageForSheet,
-        viewModel = viewModel
+        viewModel = viewModel,
+        onSwitchToLiteMode = onSwitchToLiteMode
     )
 }
 
@@ -458,7 +462,8 @@ private fun ChatDialogs(
     onUserSheetDismiss: () -> Unit,
     selectedUserForSheet: String,
     selectedMessageForSheet: BitchatMessage?,
-    viewModel: ChatViewModel
+    viewModel: ChatViewModel,
+    onSwitchToLiteMode: () -> Unit = {}
 ) {
     // Password dialog
     PasswordPromptDialog(
@@ -475,7 +480,11 @@ private fun ChatDialogs(
     AboutSheet(
         isPresented = showAppInfo,
         onDismiss = onAppInfoDismiss,
-        onShowDebug = { showDebugSheet = true }
+        onShowDebug = { showDebugSheet = true },
+        onSwitchToLiteMode = {
+            onAppInfoDismiss()
+            onSwitchToLiteMode()
+        }
     )
     if (showDebugSheet) {
         com.bitchat.android.ui.debug.DebugSettingsSheet(

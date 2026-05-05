@@ -260,9 +260,9 @@ class MainActivity : ComponentActivity() {
                 onBackPressedDispatcher.addCallback(this, backCallback)
 
                 val capabilities = remember { DeviceTierDetector.detect(context) }
-                val litePrefs = remember { LiteModePreferences(context) }
-                var forceFullMode by remember { mutableStateOf(litePrefs.forceFullMode) }
-                val forceLiteMode = remember { litePrefs.forceLiteMode }
+                val litePrefs = remember { LiteModePreferences.get(context) }
+                val forceFullMode by litePrefs.forceFullMode.collectAsState()
+                val forceLiteMode by litePrefs.forceLiteMode.collectAsState()
                 val showLite = (capabilities.tier == DeviceTier.LITE || forceLiteMode)
                     && !forceFullMode
 
@@ -273,12 +273,15 @@ class MainActivity : ComponentActivity() {
                     LiteModeScreen(
                         onConfirmOutcome = { outcome -> emitter.emit(outcome) },
                         onExitLiteMode = {
-                            litePrefs.forceFullMode = true
-                            forceFullMode = true
+                            litePrefs.setForceFullMode(true)
+                            litePrefs.setForceLiteMode(false)
                         }
                     )
                 } else {
-                    ChatScreen(viewModel = chatViewModel)
+                    ChatScreen(
+                        viewModel = chatViewModel,
+                        onSwitchToLiteMode = { litePrefs.enableLiteMode() }
+                    )
                 }
             }
             

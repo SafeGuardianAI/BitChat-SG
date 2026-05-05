@@ -4,12 +4,19 @@ import android.content.Context
 import android.content.SharedPreferences
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 /**
- * Persistent settings for the Lite/Full mode toggle. Encrypted at rest so
- * that an elder's care-flow choices aren't recoverable from device backups.
+ * Persistent + observable Lite/Full mode toggles.
+ *
+ * Encrypted at rest (an elder's care-flow choice should not leak via
+ * device backup). Exposes [forceLiteMode] / [forceFullMode] as
+ * [StateFlow]s so a toggle anywhere in the UI immediately recomposes
+ * the entry-point screen selector in MainActivity.
  */
-class LiteModePreferences(context: Context) {
+class LiteModePreferences private constructor(context: Context) {
 
     private val masterKey = MasterKey.Builder(context)
         .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
@@ -23,19 +30,39 @@ class LiteModePreferences(context: Context) {
         EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
     )
 
-    /** Force-disable Lite mode even on a LITE-tier device. Default false. */
-    var forceFullMode: Boolean
-        get() = prefs.getBoolean(KEY_FORCE_FULL_MODE, false)
-        set(value) = prefs.edit().putBoolean(KEY_FORCE_FULL_MODE, value).apply()
+    private val _forceFullMode = MutableStateFlow(prefs.getBoolean(KEY_FORCE_FULL_MODE, false))
+    val forceFullMode: StateFlow<Boolean> = _forceFullMode.asStateFlow()
 
-    /** Force Lite mode even on a STANDARD/FULL device (caregiver setup). Default false. */
-    var forceLiteMode: Boolean
-        get() = prefs.getBoolean(KEY_FORCE_LITE_MODE, false)
-        set(value) = prefs.edit().putBoolean(KEY_FORCE_LITE_MODE, value).apply()
+    private val _forceLiteMode = MutableStateFlow(prefs.getBoolean(KEY_FORCE_LITE_MODE, false))
+    val forceLiteMode: StateFlow<Boolean> = _forceLiteMode.asStateFlow()
+
+    fun setForceFullMode(value: Boolean) {
+        prefs.edit().putBoolean(KEY_FORCE_FULL_MODE, value).apply()
+        _forceFullMode.value = value
+    }
+
+    fun setForceLiteMode(value: Boolean) {
+        prefs.edit().putBoolean(KEY_FORCE_LITE_MODE, value).apply()
+        _forceLiteMode.value = value
+    }
+
+    /** Switch into Lite mode: enable lite, clear any override that pinned full. */
+    fun enableLiteMode() {
+        setForceLiteMode(true)
+        setForceFullMode(false)
+    }
 
     companion object {
         private const val PREFS_NAME = "safeguardian_lite_prefs"
         private const val KEY_FORCE_FULL_MODE = "force_full_mode"
         private const val KEY_FORCE_LITE_MODE = "force_lite_mode"
+
+        @Volatile private var INSTANCE: LiteModePreferences? = null
+
+        fun get(context: Context): LiteModePreferences {
+            return INSTANCE ?: synchronized(this) {
+                INSTANCE ?: LiteModePreferences(context.applicationContext).also { INSTANCE = it }
+            }
+        }
     }
 }
