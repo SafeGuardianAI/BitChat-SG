@@ -41,6 +41,7 @@ fun AboutSheet(
     isPresented: Boolean,
     onDismiss: () -> Unit,
     onShowDebug: (() -> Unit)? = null,
+    onSwitchToLiteMode: (() -> Unit)? = null,
     onShowConnectivityTest: (() -> Unit)? = null,
     onShowTelemetryTest: (() -> Unit)? = null,
     onShowEmergencyFM: (() -> Unit)? = null,
@@ -576,6 +577,44 @@ fun AboutSheet(
                                     )
                                 }
                             }
+                            // Easy mode (Lite) toggle
+                            if (onSwitchToLiteMode != null) {
+                                item {
+                                    val litePrefs = remember { com.bitchat.android.ui.lite.LiteModePreferences.get(context) }
+                                    val forceLite by litePrefs.forceLiteMode.collectAsState()
+                                    Column(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        Text(
+                                            text = "easy mode",
+                                            fontSize = 12.sp,
+                                            fontFamily = FontFamily.Monospace,
+                                            fontWeight = FontWeight.Medium,
+                                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f)
+                                        )
+                                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            FilterChip(
+                                                selected = !forceLite,
+                                                onClick = { litePrefs.setForceLiteMode(false) },
+                                                label = { Text("off", fontFamily = FontFamily.Monospace) }
+                                            )
+                                            FilterChip(
+                                                selected = forceLite,
+                                                onClick = { onSwitchToLiteMode() },
+                                                label = { Text("on (senior)", fontFamily = FontFamily.Monospace) }
+                                            )
+                                        }
+                                        Text(
+                                            text = "big-button rule-based UI for elders or low-end phones. sends CAP v1.2 alerts over the mesh; no AI required.",
+                                            fontSize = 10.sp,
+                                            fontFamily = FontFamily.Monospace,
+                                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                                        )
+                                    }
+                                }
+                            }
+
                             Text(
                                 text = "Open Source • Privacy First • Decentralized",
                                 fontSize = 11.sp,

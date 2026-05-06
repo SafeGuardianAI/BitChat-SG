@@ -40,8 +40,13 @@ import com.bitchat.android.onboarding.OnboardingCoordinator
 import com.bitchat.android.onboarding.OnboardingState
 import com.bitchat.android.onboarding.PermissionExplanationScreen
 import com.bitchat.android.onboarding.PermissionManager
+import com.bitchat.android.device.DeviceTier
+import com.bitchat.android.device.DeviceTierDetector
 import com.bitchat.android.ui.ChatScreen
 import com.bitchat.android.ui.ChatViewModel
+import com.bitchat.android.ui.lite.LiteAlertEmitter
+import com.bitchat.android.ui.lite.LiteModePreferences
+import com.bitchat.android.ui.lite.LiteModeScreen
 import com.bitchat.android.ui.theme.BitchatTheme
 import com.bitchat.android.nostr.PoWPreferenceManager
 import kotlinx.coroutines.delay
@@ -315,7 +320,30 @@ class MainActivity : ComponentActivity() {
 
                 // Add the callback - this will be automatically removed when the activity is destroyed
                 onBackPressedDispatcher.addCallback(this, backCallback)
-                ChatScreen(viewModel = chatViewModel)
+
+                val capabilities = remember { DeviceTierDetector.detect(context) }
+                val litePrefs = remember { LiteModePreferences.get(context) }
+                val forceFullMode by litePrefs.forceFullMode.collectAsState()
+                val forceLiteMode by litePrefs.forceLiteMode.collectAsState()
+                val showLite = (capabilities.tier == DeviceTier.LITE || forceLiteMode) && !forceFullMode
+
+                if (showLite) {
+                    val emitter = remember(meshService) {
+                        LiteAlertEmitter(context, meshService, meshService.myPeerID)
+                    }
+                    LiteModeScreen(
+                        onConfirmOutcome = { outcome -> emitter.emit(outcome) },
+                        onExitLiteMode = {
+                            litePrefs.setForceFullMode(true)
+                            litePrefs.setForceLiteMode(false)
+                        }
+                    )
+                } else {
+                    ChatScreen(
+                        viewModel = chatViewModel,
+                        onSwitchToLiteMode = { litePrefs.enableLiteMode() }
+                    )
+                }
             }
             
             OnboardingState.ERROR -> {

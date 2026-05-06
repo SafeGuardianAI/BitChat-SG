@@ -39,7 +39,10 @@ import com.bitchat.android.ui.media.FullScreenImageViewer
  * - ChatUIUtils: Utility functions for formatting and colors
  */
 @Composable
-fun ChatScreen(viewModel: ChatViewModel) {
+fun ChatScreen(
+    viewModel: ChatViewModel,
+    onSwitchToLiteMode: () -> Unit = {}
+) {
     val colorScheme = MaterialTheme.colorScheme
     val messages by viewModel.messages.observeAsState(emptyList())
     val connectedPeers by viewModel.connectedPeers.observeAsState(emptyList())
@@ -355,10 +358,11 @@ fun ChatScreen(viewModel: ChatViewModel) {
         },
         showAppInfo = showAppInfo,
         onAppInfoDismiss = { viewModel.hideAppInfo() },
+        onSwitchToLiteMode = onSwitchToLiteMode,
         showLocationChannelsSheet = showLocationChannelsSheet,
         onLocationChannelsSheetDismiss = { showLocationChannelsSheet = false },
         showUserSheet = showUserSheet,
-        onUserSheetDismiss = { 
+        onUserSheetDismiss = {
             showUserSheet = false
             selectedMessageForSheet = null // Reset message when dismissing
         },
@@ -486,6 +490,7 @@ private fun ChatDialogs(
     onPasswordDismiss: () -> Unit,
     showAppInfo: Boolean,
     onAppInfoDismiss: () -> Unit,
+    onSwitchToLiteMode: () -> Unit = {},
     showLocationChannelsSheet: Boolean,
     onLocationChannelsSheetDismiss: () -> Unit,
     showUserSheet: Boolean,
@@ -512,6 +517,10 @@ private fun ChatDialogs(
         isPresented = showAppInfo,
         onDismiss = onAppInfoDismiss,
         onShowDebug = { showDebugSheet = true },
+        onSwitchToLiteMode = {
+            onAppInfoDismiss()
+            onSwitchToLiteMode()
+        },
         onShowEmergencyFM = { showEmergencyFMSheet = true },
         onShowConnectivityTest = {
             chatContext.startActivity(

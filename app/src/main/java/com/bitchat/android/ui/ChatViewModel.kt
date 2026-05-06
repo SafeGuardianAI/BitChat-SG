@@ -733,6 +733,10 @@ class ChatViewModel(
     // MARK: - BluetoothMeshDelegate Implementation (delegated)
     
     override fun didReceiveMessage(message: BitchatMessage) {
+        val senderId = message.senderPeerID ?: message.sender
+        if (com.bitchat.android.ui.lite.CapAlertInbox.tryIngest(message.content, senderId)) {
+            return
+        }
         meshDelegateHandler.didReceiveMessage(message)
     }
     
