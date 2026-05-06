@@ -56,6 +56,21 @@ class AIPreferences(context: Context) {
         get() = prefs.getBoolean(KEY_DISASTER_MODE_ENABLED, false)
         set(value) = prefs.edit().putBoolean(KEY_DISASTER_MODE_ENABLED, value).apply()
 
+    var rescueApiEnabled: Boolean
+        get() = prefs.getBoolean(KEY_RESCUE_API_ENABLED, false)
+        set(value) = prefs.edit().putBoolean(KEY_RESCUE_API_ENABLED, value).apply()
+
+    var rescueAutoReport: Boolean
+        get() = prefs.getBoolean(KEY_RESCUE_AUTO_REPORT, true)
+        set(value) = prefs.edit().putBoolean(KEY_RESCUE_AUTO_REPORT, value).apply()
+
+    var currentVictimId: String?
+        get() = prefs.getString(KEY_CURRENT_VICTIM_ID, null)
+        set(value) = if (value != null)
+            prefs.edit().putString(KEY_CURRENT_VICTIM_ID, value).apply()
+        else
+            prefs.edit().remove(KEY_CURRENT_VICTIM_ID).apply()
+
     var selectedLLMModel: String
         get() = prefs.getString(KEY_SELECTED_LLM_MODEL, "qwen2.5-0.5b") ?: "qwen2.5-0.5b"
         set(value) = prefs.edit().putString(KEY_SELECTED_LLM_MODEL, value).apply()
@@ -97,5 +112,8 @@ class AIPreferences(context: Context) {
         private const val KEY_AI_HOSTING_ENABLED = "ai_hosting_enabled"
         private const val KEY_AI_MESSAGE_SHARING_ENABLED = "ai_message_sharing_enabled"
         private const val KEY_DISASTER_MODE_ENABLED = "disaster_mode_enabled"
+        private const val KEY_RESCUE_API_ENABLED = "rescue_api_enabled"
+        private const val KEY_RESCUE_AUTO_REPORT = "rescue_auto_report"
+        private const val KEY_CURRENT_VICTIM_ID = "current_victim_id"
     }
 }

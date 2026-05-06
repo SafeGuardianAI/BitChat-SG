@@ -232,21 +232,35 @@ class AIChatService(
                 "$deviceSnippet$message"
             }
 
-            // Apply structured output mode — PROMPT injects system prompt text,
-            // GRAMMAR passes a GBNF grammar string to the sampler.
-            val effectiveConfig = when (aiManager.preferences.structuredOutputMode) {
-                StructuredOutputMode.GRAMMAR -> taskConfig.copy(
-                    systemPrompt = taskConfig.systemPrompt +
-                        "\n\nRespond only in structured JSON with type, content, and confidence fields.",
-                    grammarString = AIGrammarDefinitions.SAFEGUARDIAN_RESPONSE_GRAMMAR,
-                    temperature = minOf(taskConfig.temperature, 0.3f)
-                )
-                StructuredOutputMode.PROMPT -> taskConfig.copy(
-                    systemPrompt = taskConfig.systemPrompt +
-                        "\n\n[STRUCTURED OUTPUT ENFORCED]\nYou MUST format all responses as valid JSON:\n" +
-                        "{\"type\":\"response|analysis|query|action\",\"content\":\"...\",\"confidence\":0.0-1.0,\"details\":null}"
-                )
-                StructuredOutputMode.OFF -> taskConfig
+            // Apply structured output mode — rescue API takes priority, then user grammar choice.
+            val rescueService = RescueAPIService.getInstance(this@AIChatService.context)
+            val effectiveConfig = when {
+                aiManager.preferences.rescueApiEnabled -> {
+                    val grammar = if (rescueService.getBackendType() == BackendType.MONGODB)
+                        AIGrammarDefinitions.VICTIM_DATA_GRAMMAR
+                    else
+                        AIGrammarDefinitions.EMERGENCY_SURVIVAL_GRAMMAR
+                    taskConfig.copy(
+                        systemPrompt = taskConfig.systemPrompt +
+                            "\n\nYou are an emergency responder. Capture victim information in structured JSON.",
+                        grammarString = grammar,
+                        temperature = 0.2f
+                    )
+                }
+                aiManager.preferences.structuredOutputMode == StructuredOutputMode.GRAMMAR ->
+                    taskConfig.copy(
+                        systemPrompt = taskConfig.systemPrompt +
+                            "\n\nRespond only in structured JSON with type, content, and confidence fields.",
+                        grammarString = AIGrammarDefinitions.SAFEGUARDIAN_RESPONSE_GRAMMAR,
+                        temperature = minOf(taskConfig.temperature, 0.3f)
+                    )
+                aiManager.preferences.structuredOutputMode == StructuredOutputMode.PROMPT ->
+                    taskConfig.copy(
+                        systemPrompt = taskConfig.systemPrompt +
+                            "\n\n[STRUCTURED OUTPUT ENFORCED]\nYou MUST format all responses as valid JSON:\n" +
+                            "{\"type\":\"response|analysis|query|action\",\"content\":\"...\",\"confidence\":0.0-1.0,\"details\":null}"
+                    )
+                else -> taskConfig
             }
 
             // Stream AI response
@@ -261,12 +275,18 @@ class AIChatService(
                         // Add to conversation context
                         aiManager.conversationContext.addUserMessage(channelId, message)
                         aiManager.conversationContext.addAIMessage(channelId, fullResponse)
-                        
+
                         // Speak response if TTS is enabled
                         if (aiManager.preferences.ttsEnabled) {
                             aiManager.aiService.speak(fullResponse)
                         }
-                        
+
+                        // Auto-report victim data if rescue API is enabled
+                        if (aiManager.preferences.rescueApiEnabled &&
+                            aiManager.preferences.rescueAutoReport) {
+                            tryReportVictim(fullResponse)
+                        }
+
                         Log.d(TAG, "Streaming completed: $fullResponse")
                     }
                     is AIResponse.Error -> {
@@ -282,8 +302,43 @@ class AIChatService(
     }.flowOn(Dispatchers.IO)
 
     /**
+     * Parse AI response for victim JSON and post/update via RescueAPIService.
+     * Uses [AIPreferences.currentVictimId] to decide create vs update.
+     */
+    private suspend fun tryReportVictim(response: String) = withContext(Dispatchers.IO) {
+        try {
+            val rescueService = RescueAPIService.getInstance(context)
+            val victim = rescueService.parseVictimFromResponse(response) ?: return@withContext
+            val existingId = aiManager.preferences.currentVictimId
+
+            if (existingId != null) {
+                val ok = rescueService.updateVictim(existingId, victim)
+                if (ok) Log.d(TAG, "Victim updated: $existingId")
+                else Log.w(TAG, "Victim update failed for ID $existingId")
+            } else {
+                val newId = rescueService.postVictim(victim)
+                if (newId != null) {
+                    aiManager.preferences.currentVictimId = newId
+                    Log.d(TAG, "New victim created with ID: $newId")
+                } else {
+                    Log.w(TAG, "Victim post returned no ID")
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Auto-report victim failed: ${e.message}")
+        }
+    }
+
+    /**
+     * Clear the current victim tracking ID so the next response creates a new victim.
+     */
+    fun newVictim() {
+        aiManager.preferences.currentVictimId = null
+    }
+
+    /**
      * Search conversation history
-     * 
+     *
      * @param query Search query
      * @param channelId Channel ID to search in
      * @return List of matching messages

@@ -135,8 +135,10 @@ class RescueAPIService(private val context: Context) {
             val victimJson = victimInfoToJson(victimInfo).toString()
             Log.d(TAG, "Posting victim info to $currentBackend backend: $victimJson")
 
-            // Try primary backend
-            val result = makeRequest("POST", endpoint, victimJson)
+            val base = endpoint.trimEnd('/')
+            val createUrl = if (currentBackend == BackendType.MONGODB) "$base/victim/report"
+                            else "$base/victim/create"
+            val result = makeRequest("POST", createUrl, victimJson)
             
             if (result != null) {
                 val victimId = extractVictimId(result)
@@ -174,10 +176,11 @@ class RescueAPIService(private val context: Context) {
             }
 
             val victimJson = victimInfoToJson(victimInfo).toString()
+            val base = endpoint.trimEnd('/')
             val updateUrl = if (currentBackend == BackendType.MONGODB) {
-                "$endpoint/victim/update/$victimId"
+                "$base/victim/update/$victimId"
             } else {
-                "$endpoint/victim/update/$victimId"
+                "$base/victim/$victimId/update"
             }
 
             Log.d(TAG, "Updating victim $victimId on $currentBackend backend")
@@ -326,10 +329,98 @@ class RescueAPIService(private val context: Context) {
     private fun extractVictimId(response: String): String? {
         return try {
             val json = JSONObject(response)
-            json.optString("_id") ?: json.optString("id") ?: json.optString("victim_id")
+            json.optString("_id").takeIf { it.isNotEmpty() }
+                ?: json.optString("id").takeIf { it.isNotEmpty() }
+                ?: json.optString("victim_id").takeIf { it.isNotEmpty() }
         } catch (e: Exception) {
             response.trim().takeIf { it.length == 24 || it.startsWith("-") }
         }
+    }
+
+    /**
+     * Parse a [VictimInfo] out of a raw AI response string.
+     *
+     * Accepts both backend root keys:
+     * - MongoDB: `{"victim_data": {...}}`
+     * - Firebase: `{"victim_info": {...}}`
+     *
+     * Returns null if no valid victim object is found.
+     */
+    fun parseVictimFromResponse(response: String): VictimInfo? {
+        val jsonText = extractJsonSubstring(response) ?: return null
+        return try {
+            val root = JSONObject(jsonText)
+            val obj = root.optJSONObject("victim_data")
+                ?: root.optJSONObject("victim_info")
+                ?: return null
+
+            val locObj = obj.optJSONObject("location")
+            val perObj = obj.optJSONObject("personal_info")
+            val medObj = obj.optJSONObject("medical_info")
+            val sitObj = obj.optJSONObject("situation")
+
+            VictimInfo(
+                id = obj.optString("id").takeIf { it.isNotEmpty() },
+                emergency_status = obj.optString("emergency_status").takeIf { it.isNotEmpty() },
+                location = locObj?.let {
+                    LocationInfo(
+                        lat = it.optDouble("lat", 0.0),
+                        lon = it.optDouble("lon", 0.0),
+                        details = it.optString("details").takeIf { s -> s.isNotEmpty() },
+                        nearest_landmark = it.optString("nearest_landmark").takeIf { s -> s.isNotEmpty() }
+                    )
+                },
+                personal_info = perObj?.let {
+                    PersonalInfo(
+                        name = it.optString("name").takeIf { s -> s.isNotEmpty() },
+                        age = if (it.has("age")) it.optInt("age") else null,
+                        gender = it.optString("gender").takeIf { s -> s.isNotEmpty() },
+                        language = it.optString("language").takeIf { s -> s.isNotEmpty() },
+                        physical_description = it.optString("physical_description").takeIf { s -> s.isNotEmpty() }
+                    )
+                },
+                medical_info = medObj?.let {
+                    MedicalInfo(
+                        injuries = it.optJSONArray("injuries")?.let { a ->
+                            (0 until a.length()).map { i -> a.getString(i) }
+                        },
+                        pain_level = if (it.has("pain_level")) it.optInt("pain_level") else null,
+                        medical_conditions = it.optJSONArray("medical_conditions")?.let { a ->
+                            (0 until a.length()).map { i -> a.getString(i) }
+                        },
+                        medications = it.optJSONArray("medications")?.let { a ->
+                            (0 until a.length()).map { i -> a.getString(i) }
+                        },
+                        allergies = it.optJSONArray("allergies")?.let { a ->
+                            (0 until a.length()).map { i -> a.getString(i) }
+                        },
+                        blood_type = it.optString("blood_type").takeIf { s -> s.isNotEmpty() }
+                    )
+                },
+                situation = sitObj?.let {
+                    SituationInfo(
+                        disaster_type = it.optString("disaster_type").takeIf { s -> s.isNotEmpty() },
+                        immediate_needs = it.optJSONArray("immediate_needs")?.let { a ->
+                            (0 until a.length()).map { i -> a.getString(i) }
+                        },
+                        trapped = if (it.has("trapped")) it.optBoolean("trapped") else null,
+                        mobility = it.optString("mobility").takeIf { s -> s.isNotEmpty() },
+                        nearby_hazards = it.optJSONArray("nearby_hazards")?.let { a ->
+                            (0 until a.length()).map { i -> a.getString(i) }
+                        }
+                    )
+                }
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to parse victim JSON: ${e.message}")
+            null
+        }
+    }
+
+    private fun extractJsonSubstring(text: String): String? {
+        val start = text.indexOf('{')
+        val end = text.lastIndexOf('}')
+        return if (start >= 0 && end > start) text.substring(start, end + 1) else null
     }
 }
 

@@ -236,6 +236,15 @@ object AIGrammarDefinitions {
     """.trimIndent()
 
     /**
+     * MongoDB victim_data grammar — mirrors EMERGENCY_SURVIVAL_GRAMMAR but uses
+     * the "victim_data" root key expected by the MongoDB backend.
+     */
+    val VICTIM_DATA_GRAMMAR = EMERGENCY_SURVIVAL_GRAMMAR.replace(
+        "victim-info-kv ::= \"\\\"victim_info\\\"\" space \":\" space victim-info",
+        "victim-info-kv ::= \"\\\"victim_data\\\"\" space \":\" space victim-info"
+    )
+
+    /**
      * List Grammar - Array of strings
      * Use for command outputs, search results, recommendations
      */
@@ -267,7 +276,8 @@ object AIGrammarDefinitions {
     fun getGrammarByName(name: String): String? = when (name.lowercase()) {
         "json" -> JSON_GRAMMAR
         "response" -> SAFEGUARDIAN_RESPONSE_GRAMMAR
-        "emergency" -> EMERGENCY_SURVIVAL_GRAMMAR
+        "emergency", "victim_info" -> EMERGENCY_SURVIVAL_GRAMMAR
+        "victim_data", "mongodb" -> VICTIM_DATA_GRAMMAR
         "list" -> LIST_GRAMMAR
         "keyvalue" -> KEY_VALUE_GRAMMAR
         else -> null
