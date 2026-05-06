@@ -12,12 +12,12 @@ SafeGuardian is the mobile client for the SAFE-NET (Sentient Assistance & Fortif
 |---------|-------------|--------|
 | BLE Mesh Networking | Multi-hop encrypted mesh via Bluetooth LE | Production |
 | On-Device LLM | Qwen3/Granite models via Nexa SDK | Production |
-| RAG Knowledge Base | Hybrid TF-IDF + vector disaster knowledge retrieval | Production |
-| ASR/TTS | Sherpa-ONNX speech recognition + Android TTS | Beta |
+| BLE Distributed Memory | Shard offloading when battery <10% | Production |
+| ASR/TTS | Sherpa-ONNX speech recognition + Android TTS | Production |
+| RAG Knowledge Base | Hybrid TF-IDF + vector disaster knowledge retrieval | Beta |
 | VAD + Keywords | Voice activity detection + emergency keyword spotting | Beta |
 | Offline Sync | Firebase + MongoDB with offline queue | Beta |
 | Vital Data Scanner | Photo-based medical/ID data extraction | Beta |
-| BLE Distributed Memory | Shard offloading when battery <10% | Beta |
 | Data Standards | CAP v1.2, EDXL-TEP, HL7 FHIR R4 | Planned |
 | Agentic AI | On-device tool-use agent for emergency automation | Planned |
 
