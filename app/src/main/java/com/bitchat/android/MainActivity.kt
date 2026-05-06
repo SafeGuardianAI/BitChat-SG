@@ -302,24 +302,28 @@ class MainActivity : ComponentActivity() {
                 )
             }
 
-            OnboardingState.CHECKING, OnboardingState.INITIALIZING, OnboardingState.COMPLETE -> {
+            OnboardingState.CHECKING, OnboardingState.INITIALIZING -> {
+                InitializingScreen(modifier)
+            }
+
+            OnboardingState.COMPLETE -> {
                 // Set up back navigation handling for the chat screen
-                val backCallback = object : OnBackPressedCallback(true) {
-                    override fun handleOnBackPressed() {
-                        // Let ChatViewModel handle navigation state
-                        val handled = chatViewModel.handleBackPressed()
-                        if (!handled) {
-                            // If ChatViewModel doesn't handle it, disable this callback
-                            // and let the system handle it (which will exit the app)
-                            this.isEnabled = false
-                            onBackPressedDispatcher.onBackPressed()
-                            this.isEnabled = true
+                val backCallback = remember {
+                    object : OnBackPressedCallback(true) {
+                        override fun handleOnBackPressed() {
+                            val handled = chatViewModel.handleBackPressed()
+                            if (!handled) {
+                                this.isEnabled = false
+                                onBackPressedDispatcher.onBackPressed()
+                                this.isEnabled = true
+                            }
                         }
                     }
                 }
-
-                // Add the callback - this will be automatically removed when the activity is destroyed
-                onBackPressedDispatcher.addCallback(this, backCallback)
+                DisposableEffect(Unit) {
+                    onBackPressedDispatcher.addCallback(this@MainActivity, backCallback)
+                    onDispose { backCallback.remove() }
+                }
 
                 val capabilities = remember { DeviceTierDetector.detect(context) }
                 val litePrefs = remember { LiteModePreferences.get(context) }

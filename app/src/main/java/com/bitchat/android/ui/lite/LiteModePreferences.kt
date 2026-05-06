@@ -2,6 +2,7 @@ package com.bitchat.android.ui.lite
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.util.Log
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -11,24 +12,27 @@ import kotlinx.coroutines.flow.asStateFlow
 /**
  * Persistent + observable Lite/Full mode toggles.
  *
- * Encrypted at rest (an elder's care-flow choice should not leak via
- * device backup). Exposes [forceLiteMode] / [forceFullMode] as
- * [StateFlow]s so a toggle anywhere in the UI immediately recomposes
- * the entry-point screen selector in MainActivity.
+ * Attempts encrypted-at-rest storage; falls back to plain SharedPreferences
+ * if the Keystore is unavailable (first-boot key generation, corrupted keystore,
+ * some emulators). Lite-mode preference is not sensitive enough to crash over.
  */
 class LiteModePreferences private constructor(context: Context) {
 
-    private val masterKey = MasterKey.Builder(context)
-        .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
-        .build()
-
-    private val prefs: SharedPreferences = EncryptedSharedPreferences.create(
-        context,
-        PREFS_NAME,
-        masterKey,
-        EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-        EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
-    )
+    private val prefs: SharedPreferences = runCatching {
+        val masterKey = MasterKey.Builder(context)
+            .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+            .build()
+        EncryptedSharedPreferences.create(
+            context,
+            PREFS_NAME,
+            masterKey,
+            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+        )
+    }.getOrElse { e ->
+        Log.w("LiteModePrefs", "EncryptedSharedPreferences unavailable, using plain: ${e.message}")
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    }
 
     private val _forceFullMode = MutableStateFlow(prefs.getBoolean(KEY_FORCE_FULL_MODE, false))
     val forceFullMode: StateFlow<Boolean> = _forceFullMode.asStateFlow()

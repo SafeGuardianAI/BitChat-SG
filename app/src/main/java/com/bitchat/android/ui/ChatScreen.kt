@@ -75,6 +75,16 @@ fun ChatScreen(
     var forceScrollToBottom by remember { mutableStateOf(false) }
     var isScrolledUp by remember { mutableStateOf(false) }
 
+    // "Help" wake-word → auto-ASR → auto-send
+    val ctx = LocalContext.current
+    LaunchedEffect(Unit) {
+        com.bitchat.android.ai.AIManager.getInstance(ctx)
+            .keywordTriggeredTranscription
+            .collect { transcription ->
+                viewModel.sendMessage(transcription)
+            }
+    }
+
     // Show password dialog when needed
     LaunchedEffect(showPasswordPrompt) {
         showPasswordDialog = showPasswordPrompt

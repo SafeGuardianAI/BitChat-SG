@@ -3,12 +3,18 @@ package com.bitchat.android.ai
 import android.content.Context
 import android.util.Log
 import com.bitchat.android.audio.AudioPipeline
+import com.bitchat.android.audio.PipelineEvent
 import com.bitchat.android.device.ConnectivityMonitor
 import com.bitchat.android.device.DeviceStateManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
@@ -19,6 +25,7 @@ class AIManager(private val context: Context) {
     
     companion object {
         private const val TAG = "AIManager"
+        private const val WAKE_WORD = "help"
         private var instance: AIManager? = null
         
         fun getInstance(context: Context): AIManager {
@@ -41,6 +48,15 @@ class AIManager(private val context: Context) {
     val audioPipeline = AudioPipeline(context)
 
     val managerScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    val speechRecognitionService = SpeechRecognitionService(context)
+
+    private val _keywordTriggeredTranscription =
+        MutableSharedFlow<String>(replay = 0, extraBufferCapacity = 4)
+    val keywordTriggeredTranscription: SharedFlow<String> =
+        _keywordTriggeredTranscription.asSharedFlow()
+
+    private var watcherJob: Job? = null
+
     private val rerankerService = RerankerService(context, preferences)
     private val ragService = RAGService(context, preferences, rerankerService)
     private val documentManager = RAGDocumentManager(context)
@@ -227,6 +243,36 @@ class AIManager(private val context: Context) {
     @androidx.annotation.RequiresPermission(android.Manifest.permission.RECORD_AUDIO)
     fun startVadPipeline(mode: AudioPipeline.PipelineMode = AudioPipeline.PipelineMode.VAD_KEYWORD) {
         audioPipeline.start(mode, managerScope)
+        startKeywordTriggerWatcher()
+    }
+
+    /**
+     * Subscribe to pipeline events and fire a full ASR session when the
+     * wake word ("help") is detected. The resulting transcription is emitted
+     * to [keywordTriggeredTranscription] so the UI can auto-send it.
+     *
+     * Idempotent — safe to call multiple times.
+     */
+    fun startKeywordTriggerWatcher() {
+        if (watcherJob?.isActive == true) return
+        watcherJob = managerScope.launch {
+            audioPipeline.pipelineEvents.collect { event ->
+                if (event is PipelineEvent.KeywordDetected &&
+                    event.detection.keyword.equals(WAKE_WORD, ignoreCase = true)) {
+                    setAsrActive(true)
+                    try {
+                        val transcription = withContext(Dispatchers.Main) {
+                            speechRecognitionService.recognizeFromMicrophone()
+                        }
+                        if (!transcription.isNullOrBlank()) {
+                            _keywordTriggeredTranscription.tryEmit(transcription)
+                        }
+                    } finally {
+                        setAsrActive(false)
+                    }
+                }
+            }
+        }
     }
 
     /** Notify the VAD pipeline that AsrAudioRecorder is taking the mic. */
