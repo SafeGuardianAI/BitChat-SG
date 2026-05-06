@@ -423,34 +423,28 @@ object AIModelCatalog {
     // ASR MODELS (Sherpa-ONNX)
     // ============================================
 
-    val SHERPA_ONNX_CANARY_MULTILANG = AIModel(
-        id = "sherpa-onnx-canary-multilang",
-        name = "Sherpa-ONNX Canary Multilingual",
+    /**
+     * Whisper Tiny (multilingual, int8) bundled in the APK under
+     * assets/models/sherpa-onnx-whisper-tiny/. No download required —
+     * audio scribe and offline ASR work immediately after install.
+     *
+     * downloadUrl kept so ModelManager can treat it as "already present"
+     * without attempting a network fetch; modelFileName matches the
+     * asset subdirectory name for UI parity with other models.
+     */
+    val SHERPA_ONNX_WHISPER_TINY = AIModel(
+        id = "sherpa-onnx-whisper-tiny",
+        name = "Sherpa-ONNX Whisper Tiny (multilingual)",
         type = ModelType.ASR,
         quantization = QuantizationType.Q8_0,
-        parameterCount = "180M",
-        fileSizeMB = 200,
-        downloadUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-canary-180m-flash-en-es-de-fr-int8.tar.bz2",
-        modelFileName = "sherpa-onnx-nemo-canary-180m-flash-en-es-de-fr-int8",
-        description = "NVIDIA Canary with multilingual support (EN/ES/DE/FR). Real-time transcription.",
-        languages = listOf("en", "es", "de", "fr"),
+        parameterCount = "39M",
+        fileSizeMB = 99,
+        downloadUrl = "bundled://models/sherpa-onnx-whisper-tiny",
+        modelFileName = "sherpa-onnx-whisper-tiny",
+        description = "Multilingual Whisper Tiny (int8) bundled in-app. Supports EN, TR, ES, DE, FR, IT, PT, NL, JA, KO, ZH, AR, HI.",
+        languages = listOf("en", "tr", "es", "de", "fr", "it", "pt", "nl", "ja", "ko", "zh", "ar", "hi"),
         batteryImpact = BatteryImpact.LOW,
-        memoryRequirementMB = 250
-    )
-
-    val SHERPA_ONNX_SMALL_EN = AIModel(
-        id = "sherpa-onnx-small-en",
-        name = "Sherpa-ONNX Small English",
-        type = ModelType.ASR,
-        quantization = QuantizationType.Q8_0,
-        parameterCount = "40M",
-        fileSizeMB = 40,
-        downloadUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-whisper-tiny.en.tar.bz2",
-        modelFileName = "sherpa-onnx-whisper-tiny.en",
-        description = "Compact English-only ASR based on Whisper Tiny. Very low battery.",
-        languages = listOf("en"),
-        batteryImpact = BatteryImpact.LOW,
-        memoryRequirementMB = 80
+        memoryRequirementMB = 155
     )
 
     // ============================================
@@ -463,7 +457,7 @@ object AIModelCatalog {
     val RECOMMENDED_MODELS = listOf(
         GRANITE_4_0_MICRO_Q4,
         EMBEDDING_GEMMA_300M,
-        SHERPA_ONNX_CANARY_MULTILANG
+        SHERPA_ONNX_WHISPER_TINY
     )
 
     /**
@@ -505,8 +499,7 @@ object AIModelCatalog {
      * All ASR models
      */
     val ASR_MODELS = listOf(
-        SHERPA_ONNX_CANARY_MULTILANG,
-        SHERPA_ONNX_SMALL_EN
+        SHERPA_ONNX_WHISPER_TINY
     )
 
     /**

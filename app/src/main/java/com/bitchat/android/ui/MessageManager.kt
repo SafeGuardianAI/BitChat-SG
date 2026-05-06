@@ -24,6 +24,15 @@ class MessageManager(private val state: ChatState) {
         state.setMessages(currentMessages)
     }
 
+    fun updateMessageContent(messageId: String, newContent: String) {
+        val list = state.getMessagesValue().toMutableList()
+        val idx = list.indexOfFirst { it.id == messageId }
+        if (idx >= 0) {
+            list[idx] = list[idx].copy(content = newContent)
+            state.setMessages(list)
+        }
+    }
+
     // Log a system message into the main chat (visible to user)
     fun addSystemMessage(text: String) {
         val sys = BitchatMessage(

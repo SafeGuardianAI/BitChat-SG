@@ -211,22 +211,47 @@ class AIChatService(
         try {
             Log.d(TAG, "Streaming response for: $message")
             
+            // Compact device state snippet for AI context
+            val deviceSnippet = aiManager.deviceStateManager.deviceState.value.let { s ->
+                val bat = s.battery
+                val net = s.network
+                "[Device: battery=${bat.level}%${if (bat.isCharging) " charging" else ""}, " +
+                "network=${net.type}${if (!net.isConnected) " (offline)" else ""}]\n"
+            }
+
             // Get conversation context
             val context = if (useRAG && aiManager.preferences.ragEnabled) {
                 // Use RAG service for better context retrieval
                 val ragContext = getRAGContext(message, channelId)
                 if (ragContext.isNotEmpty()) {
-                    "Context from documents:\n$ragContext\n\nPrevious conversation:\n${getConversationContext(channelId)}\n\nUser: $message"
+                    "${deviceSnippet}Context from documents:\n$ragContext\n\nPrevious conversation:\n${getConversationContext(channelId)}\n\nUser: $message"
                 } else {
-                    "Previous conversation:\n${getConversationContext(channelId)}\n\nUser: $message"
+                    "${deviceSnippet}Previous conversation:\n${getConversationContext(channelId)}\n\nUser: $message"
                 }
             } else {
-                message
+                "$deviceSnippet$message"
+            }
+
+            // Apply structured output mode — PROMPT injects system prompt text,
+            // GRAMMAR passes a GBNF grammar string to the sampler.
+            val effectiveConfig = when (aiManager.preferences.structuredOutputMode) {
+                StructuredOutputMode.GRAMMAR -> taskConfig.copy(
+                    systemPrompt = taskConfig.systemPrompt +
+                        "\n\nRespond only in structured JSON with type, content, and confidence fields.",
+                    grammarString = AIGrammarDefinitions.SAFEGUARDIAN_RESPONSE_GRAMMAR,
+                    temperature = minOf(taskConfig.temperature, 0.3f)
+                )
+                StructuredOutputMode.PROMPT -> taskConfig.copy(
+                    systemPrompt = taskConfig.systemPrompt +
+                        "\n\n[STRUCTURED OUTPUT ENFORCED]\nYou MUST format all responses as valid JSON:\n" +
+                        "{\"type\":\"response|analysis|query|action\",\"content\":\"...\",\"confidence\":0.0-1.0,\"details\":null}"
+                )
+                StructuredOutputMode.OFF -> taskConfig
             }
 
             // Stream AI response
             var fullResponse = ""
-            aiManager.aiService.generateResponse(context, taskConfig).collect { response ->
+            aiManager.aiService.generateResponse(context, effectiveConfig).collect { response ->
                 when (response) {
                     is AIResponse.Token -> {
                         fullResponse += response.text
@@ -395,8 +420,14 @@ class AIChatService(
     /**
      * Get ASR service status
      */
-    fun getASRStatus(): String =
-        if (asrService.isInitialized) "ASR ready (Whisper Tiny EN)" else "ASR not initialized"
+    fun getASRStatus(): String {
+        if (!ASRService.isModelAvailable(context)) return "ASR model missing"
+        return if (asrService.isInitialized) {
+            "ASR ready (Whisper Tiny · ${asrService.getCurrentLanguage()})"
+        } else {
+            "ASR model ready (not initialized)"
+        }
+    }
     
     /**
      * Check if microphone permission is available
@@ -537,10 +568,10 @@ class AIChatService(
      * @return Structured report string, or an error message the caller can display inline.
      */
     suspend fun processAudioNote(audioPath: String): String = withContext(Dispatchers.IO) {
-        // 1. Make sure the ASR model is available
-        if (!ASRService.isModelDownloaded(context)) {
-            return@withContext "⬇ ASR model not downloaded.\n" +
-                "Go to Settings → AI Models and download \"Sherpa-ONNX Small English\" (~40 MB)."
+        // 1. Make sure the bundled Whisper Tiny assets are present
+        if (!ASRService.isModelAvailable(context)) {
+            return@withContext "ASR model missing from this build.\n" +
+                "Reinstall the app — Whisper Tiny should ship in assets."
         }
 
         // 2. Transcribe

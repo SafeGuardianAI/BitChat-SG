@@ -29,7 +29,13 @@ data class TaskConfig(
      * Output schema hint for structured tasks.
      * Null = free-form text; non-null = JSON schema description passed in system prompt.
      */
-    val outputSchemaHint: String? = null
+    val outputSchemaHint: String? = null,
+    /**
+     * GBNF grammar string for grammar-constrained sampling.
+     * Null = unconstrained generation. Set by [AIChatService] when
+     * [StructuredOutputMode.GRAMMAR] is active.
+     */
+    val grammarString: String? = null
 ) {
     companion object {
 

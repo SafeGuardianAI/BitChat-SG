@@ -183,15 +183,10 @@ class SpeechRecognitionService(private val context: Context) {
      * Offline recognition using Sherpa-ONNX / Nexa ASR.
      */
     private suspend fun recognizeOffline(language: String): String? {
-        if (!offlineAsrService.isInitialized) {
-            val modelId = if (language == "en") {
-                AIModelCatalog.SHERPA_ONNX_SMALL_EN.id
-            } else {
-                AIModelCatalog.SHERPA_ONNX_CANARY_MULTILANG.id
-            }
-            offlineAsrService.initialize()
-        }
-        // Offline ASR requires recording first — return status
+        // Whisper Tiny (multilingual) is bundled in assets — no download/ID branching.
+        // ASRService.initialize() reuses the recognizer across languages and rebuilds
+        // transparently when the language changes.
+        offlineAsrService.initialize(language = language)
         Log.d(TAG, "Offline ASR initialized for language: $language")
         return null // Caller should use VoiceInputService + transcribeFile flow
     }

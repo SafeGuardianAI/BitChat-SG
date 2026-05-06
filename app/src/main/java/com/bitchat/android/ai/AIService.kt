@@ -9,6 +9,7 @@ import com.nexa.sdk.bean.GenerationConfig
 import com.nexa.sdk.bean.LlmCreateInput
 import com.nexa.sdk.bean.LlmStreamResult
 import com.nexa.sdk.bean.ModelConfig
+import com.nexa.sdk.bean.SamplerConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
@@ -375,6 +376,7 @@ class NexaLlmService(private val context: Context) : AIService {
                 stopWords = null,
                 stopCount = 0,
                 nPast = 0,
+                samplerConfig = taskConfig.grammarString?.let { SamplerConfig(grammarString = it) },
                 imagePaths = null,
                 imageCount = 0,
                 audioPaths = null,

@@ -61,6 +61,10 @@ class CommandProcessor(
         CommandSuggestion("/connectivity-share", emptyList(), null, "share device connectivity status over mesh"),
         CommandSuggestion("/share-ai", emptyList(), "<question>", "run AI analysis and broadcast result to mesh"),
         CommandSuggestion("/peer-status", emptyList(), null, "show telemetry and AI vital status of connected peers"),
+        CommandSuggestion("/agent", emptyList(), "<query>", "run ReAct agentic AI with tool use"),
+        CommandSuggestion("/vad", emptyList(), "[on|off]", "enable or disable background VAD/keyword pipeline"),
+        CommandSuggestion("/device-status", emptyList(), null, "show current device state (battery, network, storage)"),
+        CommandSuggestion("/dms", emptyList(), "[on|off]", "enable or disable BLE distributed memory sharding"),
     )
     
     // MARK: - Command Processing
@@ -115,6 +119,10 @@ class CommandProcessor(
             "/connectivity-share" -> handleConnectivityShare(meshService)
             "/share-ai" -> handleShareAI(parts, meshService)
             "/peer-status" -> handlePeerStatus(meshService)
+            "/agent" -> handleAgent(parts, meshService)
+            "/vad" -> handleVad(parts, meshService)
+            "/device-status" -> handleDeviceStatus(meshService)
+            "/dms" -> handleDistributedMemory(parts, meshService)
             else -> handleUnknownCommand(cmd)
         }
         
@@ -1072,92 +1080,86 @@ class CommandProcessor(
 
     private fun handleDownload(parts: List<String>, meshService: BluetoothMeshService) {
         val (ai, _) = getAI(meshService)
-        
+        val ctx = meshService.getContext()
+
         if (parts.size < 2) {
-            // Show available models
-            val availableModels = com.bitchat.android.ai.ModelCatalog.LLM_MODELS
-            val modelList = availableModels.joinToString("\n") { 
+            val modelList = com.bitchat.android.ai.ModelCatalog.LLM_MODELS.joinToString("\n") {
                 "- ${it.id}: ${it.name} (${it.fileSizeMB}MB)"
             }
-            val msg = com.bitchat.android.model.BitchatMessage(
-                sender = "system",
-                content = "Available models to download:\n$modelList\n\nUsage: /download <model-id>",
-                timestamp = java.util.Date(),
-                isRelay = false
-            )
-            messageManager.addMessage(msg)
+            messageManager.addSystemMessage("Available models:\n$modelList\n\nUsage: /download <model-id>")
             return
         }
-        
+
         val modelId = parts[1]
         val model = com.bitchat.android.ai.ModelCatalog.getModelById(modelId)
-        
+
         if (model == null) {
-            val msg = com.bitchat.android.model.BitchatMessage(
-                sender = "system",
-                content = "Model not found: $modelId. Use /download to see available models.",
-                timestamp = java.util.Date(),
-                isRelay = false
-            )
-            messageManager.addMessage(msg)
+            messageManager.addSystemMessage("Model not found: $modelId. Use /download to see available models.")
             return
         }
-        
-        // Check if already downloaded
+
         if (ai.modelManager.isModelDownloaded(model)) {
-            val msg = com.bitchat.android.model.BitchatMessage(
-                sender = "system",
-                content = "Model '${model.name}' is already downloaded.",
-                timestamp = java.util.Date(),
-                isRelay = false
-            )
-            messageManager.addMessage(msg)
+            messageManager.addSystemMessage("Model '${model.name}' is already downloaded.")
             return
         }
-        
-        // Start download
-        val startMsg = com.bitchat.android.model.BitchatMessage(
+
+        // Warn (don't block) if on cellular rather than WiFi
+        try {
+            val cm = ctx.getSystemService(android.content.Context.CONNECTIVITY_SERVICE)
+                    as android.net.ConnectivityManager
+            val nc = cm.getNetworkCapabilities(cm.activeNetwork)
+            when {
+                nc == null -> messageManager.addSystemMessage("Warning: no active network detected.")
+                !nc.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) &&
+                nc.hasTransport(android.net.NetworkCapabilities.TRANSPORT_CELLULAR) ->
+                    messageManager.addSystemMessage(
+                        "Warning: on cellular — ${model.fileSizeMB}MB will use mobile data."
+                    )
+            }
+        } catch (_: Exception) {}
+
+        // Create one progress message and update it in-place (no message spam)
+        val progressMsg = com.bitchat.android.model.BitchatMessage(
             sender = "system",
-            content = "Starting download of '${model.name}' (${model.fileSizeMB}MB)...",
+            content = "Downloading '${model.name}' (${model.fileSizeMB}MB)… 0%",
             timestamp = java.util.Date(),
             isRelay = false
         )
-        messageManager.addMessage(startMsg)
-        
-        runBlocking {
-            try {
-                val result = ai.modelManager.downloadModel(model) { progress, downloadedMB, totalMB ->
-                    // Update progress (could be enhanced with real-time updates)
-                    android.util.Log.d("Download", "Progress: $progress% ($downloadedMB/$totalMB MB)")
+        messageManager.addMessage(progressMsg)
+        val progressMsgId = progressMsg.id
+        val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
+
+        Thread {
+            var lastReportedPct = -1
+            runBlocking {
+                try {
+                    val result = ai.modelManager.downloadModel(model) { progress, downloadedMB, totalMB ->
+                        val pct = (progress * 100).toInt()
+                        if (pct >= lastReportedPct + 5) {
+                            lastReportedPct = pct
+                            val text = "Downloading '${model.name}': $pct% (${downloadedMB.toInt()}/${totalMB.toInt()} MB)"
+                            mainHandler.post { messageManager.updateMessageContent(progressMsgId, text) }
+                        }
+                    }
+                    if (result.isSuccess) {
+                        mainHandler.post {
+                            messageManager.updateMessageContent(
+                                progressMsgId, "✅ '${model.name}' downloaded successfully!"
+                            )
+                        }
+                    } else {
+                        val err = result.exceptionOrNull()?.message ?: "unknown error"
+                        mainHandler.post {
+                            messageManager.updateMessageContent(progressMsgId, "❌ Download failed: $err")
+                        }
+                    }
+                } catch (e: Exception) {
+                    mainHandler.post {
+                        messageManager.updateMessageContent(progressMsgId, "❌ Download error: ${e.message}")
+                    }
                 }
-                
-                if (result.isSuccess) {
-                    val successMsg = com.bitchat.android.model.BitchatMessage(
-                        sender = "system",
-                        content = "✅ Model '${model.name}' downloaded successfully!",
-                        timestamp = java.util.Date(),
-                        isRelay = false
-                    )
-                    messageManager.addMessage(successMsg)
-                } else {
-                    val errorMsg = com.bitchat.android.model.BitchatMessage(
-                        sender = "system",
-                        content = "❌ Download failed: ${result.exceptionOrNull()?.message}",
-                        timestamp = java.util.Date(),
-                        isRelay = false
-                    )
-                    messageManager.addMessage(errorMsg)
-                }
-            } catch (e: Exception) {
-                val errorMsg = com.bitchat.android.model.BitchatMessage(
-                    sender = "system",
-                    content = "❌ Download error: ${e.message}",
-                    timestamp = java.util.Date(),
-                    isRelay = false
-                )
-                messageManager.addMessage(errorMsg)
             }
-        }
+        }.start()
     }
     
     private fun handleUnknownCommand(cmd: String) {
@@ -1655,5 +1657,111 @@ User question: $question"""
             }
         }
         messageManager.addSystemMessage(sb.toString())
+    }
+
+    private fun handleAgent(parts: List<String>, meshService: BluetoothMeshService) {
+        val (ai, _) = getAI(meshService)
+        val query = parts.drop(1).joinToString(" ").trim()
+        if (query.isEmpty()) {
+            messageManager.addSystemMessage("Usage: /agent <query>\nExample: /agent check battery and send SOS if below 10%")
+            return
+        }
+        if (!ai.isAIReady()) {
+            messageManager.addSystemMessage("AI not ready. Use /ai on first.")
+            return
+        }
+        messageManager.addSystemMessage("🤖 Agent running: $query")
+        val executor = com.bitchat.android.ai.agent.AgentExecutor(meshService.getContext(), ai.aiService)
+        val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
+        Thread {
+            runBlocking {
+                executor.execute(query).collect { event ->
+                    when (event) {
+                        is com.bitchat.android.ai.agent.AgentEvent.Thinking ->
+                            mainHandler.post { messageManager.addSystemMessage("💭 ${event.thought}") }
+                        is com.bitchat.android.ai.agent.AgentEvent.ToolUse ->
+                            mainHandler.post { messageManager.addSystemMessage("🔧 Tool: ${event.tool}") }
+                        is com.bitchat.android.ai.agent.AgentEvent.ToolResponse ->
+                            mainHandler.post { messageManager.addSystemMessage("  → ${event.result.take(200)}") }
+                        is com.bitchat.android.ai.agent.AgentEvent.FinalAnswer ->
+                            mainHandler.post {
+                                messageManager.addMessage(
+                                    com.bitchat.android.model.BitchatMessage(
+                                        sender = "agent", content = event.answer,
+                                        timestamp = java.util.Date(), isRelay = false
+                                    )
+                                )
+                            }
+                        is com.bitchat.android.ai.agent.AgentEvent.Error ->
+                            mainHandler.post { messageManager.addSystemMessage("Agent error: ${event.message}") }
+                        is com.bitchat.android.ai.agent.AgentEvent.ConfirmationRequired ->
+                            mainHandler.post { messageManager.addSystemMessage("Confirmation required for: ${event.tool} — ${event.description}") }
+                    }
+                }
+            }
+        }.start()
+    }
+
+    private fun handleVad(parts: List<String>, meshService: BluetoothMeshService) {
+        val ai = com.bitchat.android.ai.AIManager.getInstance(meshService.getContext())
+        val arg = parts.getOrNull(1)?.lowercase()
+        val enable = when (arg) {
+            "on" -> true
+            "off" -> false
+            else -> !ai.audioPipeline.isRunning
+        }
+        if (enable) {
+            try {
+                ai.startVadPipeline()
+                messageManager.addSystemMessage("VAD pipeline started (VAD+keyword mode)")
+            } catch (e: Exception) {
+                messageManager.addSystemMessage("VAD start failed: ${e.message}")
+            }
+        } else {
+            ai.audioPipeline.stop()
+            messageManager.addSystemMessage("VAD pipeline stopped")
+        }
+    }
+
+    private fun handleDeviceStatus(meshService: BluetoothMeshService) {
+        val ai = com.bitchat.android.ai.AIManager.getInstance(meshService.getContext())
+        val s = ai.deviceStateManager.deviceState.value
+        val bat = s.battery
+        val net = s.network
+        val stor = s.storage
+        val loc = s.location
+        val sb = StringBuilder("--- Device Status ---\n")
+        sb.appendLine("Battery: ${bat.level}%${if (bat.isCharging) " (charging via ${bat.chargingSource})" else ""}, health=${bat.health}")
+        sb.appendLine("Network: ${net.type}${if (!net.isConnected) " (offline)" else ""}, metered=${net.isMetered}")
+        sb.appendLine("Storage: ${stor.availableMB}MB free / ${stor.totalMB}MB (${stor.usedPercent}% used)")
+        if (loc != null) {
+            sb.appendLine("Location: ${String.format("%.5f", loc.latitude)}, ${String.format("%.5f", loc.longitude)} ±${loc.accuracy.toInt()}m")
+        } else {
+            sb.appendLine("Location: unavailable")
+        }
+        sb.appendLine("Power save: ${s.power.isPowerSaveMode}, screen on: ${s.power.isInteractive}")
+        sb.append("Device: ${s.device.manufacturer} ${s.device.model} (${s.device.osVersion})")
+        messageManager.addSystemMessage(sb.toString())
+    }
+
+    private fun handleDistributedMemory(parts: List<String>, meshService: BluetoothMeshService) {
+        val context = meshService.getContext()
+        val ai = com.bitchat.android.ai.AIManager.getInstance(context)
+        val arg = parts.getOrNull(1)?.lowercase()
+        when (arg) {
+            "on" -> {
+                val dms = com.bitchat.android.mesh.distributed.DistributedMemoryManager(context)
+                dms.startBatteryMonitor(ai.managerScope) {
+                    android.util.Log.i("DMS", "Low battery — sharding triggered")
+                }
+                messageManager.addSystemMessage("BLE distributed memory sharding enabled (activates below 10% battery)")
+            }
+            "off" -> {
+                messageManager.addSystemMessage("BLE distributed memory: use /dms on to re-enable")
+            }
+            else -> {
+                messageManager.addSystemMessage("Usage: /dms [on|off]\nSplits critical memory across mesh peers when battery is critical.")
+            }
+        }
     }
 }

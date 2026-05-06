@@ -407,7 +407,7 @@ class MainActivity : ComponentActivity() {
         lifecycleScope.launch {
             delay(200) // Small delay for smooth transition
             
-            if (permissionManager.isFirstTimeLaunch()) {
+            if (permissionManager.isFirstTimeLaunch() && !permissionManager.areAllPermissionsGranted()) {
                 Log.d("MainActivity", "First time launch, showing permission explanation")
                 mainViewModel.updateOnboardingState(OnboardingState.PERMISSION_EXPLANATION)
             } else if (permissionManager.areAllPermissionsGranted()) {
@@ -789,6 +789,19 @@ class MainActivity : ComponentActivity() {
                     Log.d("MainActivity", "TelemetryAgent mesh attached")
                 } catch (e: Exception) {
                     Log.w("MainActivity", "TelemetryAgent attach failed (non-fatal): ${e.message}")
+                }
+
+                // Wire ConnectivityMonitor → TelemetryAgent: re-broadcast on connectivity change
+                try {
+                    val aiMgr = com.bitchat.android.ai.AIManager.getInstance(this@MainActivity)
+                    val telemetry = com.bitchat.android.telemetry.TelemetryAgent
+                        .getInstance(this@MainActivity)
+                    aiMgr.connectivityMonitor.addListener { _, _ ->
+                        telemetry.broadcastToMainChannel()
+                    }
+                    Log.d("MainActivity", "ConnectivityMonitor → TelemetryAgent wired")
+                } catch (e: Exception) {
+                    Log.w("MainActivity", "ConnectivityMonitor wire failed (non-fatal): ${e.message}")
                 }
 
                 Log.d("MainActivity", "App initialization complete")

@@ -71,7 +71,7 @@ fun AudioMessageItem(
     }
 
     var scribeState by remember { mutableStateOf<ScribeState>(ScribeState.Idle) }
-    val asrAvailable = remember { ASRService.isModelDownloaded(context) }
+    val asrAvailable = remember { ASRService.isModelAvailable(context) }
 
     Column(modifier = modifier.fillMaxWidth()) {
         // Header: nickname + timestamp

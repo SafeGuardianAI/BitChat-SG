@@ -226,6 +226,9 @@ fun ChatScreen(viewModel: ChatViewModel) {
                 selectedPrivatePeer = selectedPrivatePeer,
                 currentChannel = currentChannel,
                 nickname = nickname,
+                onAsrTranscription = { text ->
+                    messageText = TextFieldValue(text, selection = TextRange(text.length))
+                },
                 colorScheme = colorScheme
             )
         }
@@ -382,6 +385,7 @@ private fun ChatInputSection(
     selectedPrivatePeer: String?,
     currentChannel: String?,
     nickname: String,
+    onAsrTranscription: (String) -> Unit = {},
     colorScheme: ColorScheme
 ) {
     Surface(
@@ -418,6 +422,7 @@ private fun ChatInputSection(
                 selectedPrivatePeer = selectedPrivatePeer,
                 currentChannel = currentChannel,
                 nickname = nickname,
+                onAsrTranscription = onAsrTranscription,
                 modifier = Modifier.fillMaxWidth()
             )
         }

@@ -1,3 +1,6 @@
+# Local debug model cache (push_debug_models.sh)
+.debug_models/
+
 # Android Studio / IntelliJ
 .idea/
 *.iml

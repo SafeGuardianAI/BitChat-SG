@@ -20,14 +20,47 @@ class ModelManager(private val context: Context) {
         private const val BUFFER_SIZE = 8 * 1024 // 8 KB
     }
 
+    // Single-slot dispatcher so downloads don't starve BLE's shared IO pool.
+    private val downloadDispatcher = Dispatchers.IO.limitedParallelism(1)
+
     private val modelsDir: File by lazy {
         File(context.filesDir, MODELS_DIR).also { it.mkdirs() }
     }
 
+    // External files dir is ADB-writable without root — used by push_debug_models.sh
+    private val externalModelsDir: File? by lazy {
+        context.getExternalFilesDir(MODELS_DIR)?.also { it.mkdirs() }
+    }
+
+    private fun findFile(name: String): File? {
+        val internal = File(modelsDir, name)
+        if (internal.exists() && internal.length() > 256) return internal
+        val external = externalModelsDir?.let { File(it, name) }
+        if (external != null && external.exists() && external.length() > 256) return external
+        return null
+    }
+
+    // Native SDK (JNI) can't open files from external storage paths.
+    // This migrates a model from external to internal storage if needed,
+    // then returns the internal path the SDK can safely open.
+    private fun ensureInternalPath(name: String): File? {
+        val internal = File(modelsDir, name)
+        if (internal.exists() && internal.length() > 256) return internal
+        val external = externalModelsDir?.let { File(it, name) } ?: return null
+        if (!external.exists() || external.length() <= 256) return null
+        Log.d(TAG, "Migrating $name from external to internal (${external.length() / 1_048_576} MB) ...")
+        return try {
+            external.copyTo(internal, overwrite = true)
+            Log.d(TAG, "Migration complete: $name")
+            internal
+        } catch (e: Exception) {
+            Log.e(TAG, "Migration failed for $name: ${e.message}")
+            null
+        }
+    }
+
     fun isModelDownloaded(model: ModelInfo): Boolean {
-        val modelFile = File(modelsDir, "${model.id}.gguf")
-        // A placeholder written by a previous stub has length <= 256 bytes — treat as not downloaded
-        return modelFile.exists() && modelFile.length() > 256
+        return findFile("${model.id}.gguf") != null
     }
 
     fun getDownloadedModels(): List<ModelInfo> {
@@ -37,7 +70,7 @@ class ModelManager(private val context: Context) {
     suspend fun downloadModel(
         model: ModelInfo,
         onProgress: (progress: Float, downloadedMB: Float, totalMB: Float) -> Unit
-    ): Result<Unit> = withContext(Dispatchers.IO) {
+    ): Result<Unit> = withContext(downloadDispatcher) {
         val url = model.downloadUrl.ifBlank {
             return@withContext Result.failure(
                 IllegalArgumentException("No download URL configured for model '${model.id}'")
@@ -112,10 +145,8 @@ class ModelManager(private val context: Context) {
         }
     }
 
-    fun getModelPath(model: ModelInfo): String? {
-        val modelFile = File(modelsDir, "${model.id}.gguf")
-        return if (isModelDownloaded(model)) modelFile.absolutePath else null
-    }
+    fun getModelPath(model: ModelInfo): String? =
+        ensureInternalPath("${model.id}.gguf")?.absolutePath
 
     fun deleteModel(model: ModelInfo): Boolean {
         val modelFile = File(modelsDir, "${model.id}.gguf")
@@ -126,14 +157,12 @@ class ModelManager(private val context: Context) {
 
     fun isAIModelDownloaded(model: AIModel): Boolean {
         val ext = if (model.type == ModelType.NPU) ".nexa" else ".gguf"
-        val f   = File(modelsDir, "${model.id}$ext")
-        return f.exists() && f.length() > 256
+        return findFile("${model.id}$ext") != null
     }
 
     fun getAIModelPath(model: AIModel): String? {
-        val ext  = if (model.type == ModelType.NPU) ".nexa" else ".gguf"
-        val file = File(modelsDir, "${model.id}$ext")
-        return if (file.exists() && file.length() > 256) file.absolutePath else null
+        val ext = if (model.type == ModelType.NPU) ".nexa" else ".gguf"
+        return ensureInternalPath("${model.id}$ext")?.absolutePath
     }
 
     /**
@@ -145,7 +174,7 @@ class ModelManager(private val context: Context) {
     suspend fun downloadAIModel(
         model: AIModel,
         onProgress: (modelId: String, progress: Float, downloadedMB: Float, totalMB: Float) -> Unit
-    ): Result<Unit> = withContext(Dispatchers.IO) {
+    ): Result<Unit> = withContext(downloadDispatcher) {
         // Resolve dependencies (e.g. NPU model requires its GGUF base)
         val deps = AIModelCatalog.resolveDependencies(model)
         val toDownload = deps + model   // deps first, then the model itself

@@ -36,6 +36,7 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.withStyle
 import com.bitchat.android.ui.theme.BASE_FONT_SIZE
 import com.bitchat.android.features.voice.normalizeAmplitudeSample
@@ -170,6 +171,7 @@ fun MessageInput(
     selectedPrivatePeer: String?,
     currentChannel: String?,
     nickname: String,
+    onAsrTranscription: (String) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val colorScheme = MaterialTheme.colorScheme
@@ -180,6 +182,16 @@ fun MessageInput(
     var isRecording by remember { mutableStateOf(false) }
     var elapsedMs by remember { mutableStateOf(0L) }
     var amplitude by remember { mutableStateOf(0) }
+
+    // Space on empty field activates AI mode (/ask prefix)
+    val wrappedOnValueChange: (TextFieldValue) -> Unit = { newValue ->
+        if (value.text.isEmpty() && newValue.text == " ") {
+            val prefix = "/ask "
+            onValueChange(TextFieldValue(prefix, selection = TextRange(prefix.length)))
+        } else {
+            onValueChange(newValue)
+        }
+    }
 
     Row(
         modifier = modifier.padding(horizontal = 12.dp, vertical = 8.dp), // Reduced padding
@@ -193,7 +205,7 @@ fun MessageInput(
             // Always keep the text field mounted to retain focus and avoid IME collapse
             BasicTextField(
                 value = value,
-                onValueChange = onValueChange,
+                onValueChange = wrappedOnValueChange,
                 textStyle = MaterialTheme.typography.bodyMedium.copy(
                     color = colorScheme.primary,
                     fontFamily = FontFamily.Monospace
@@ -262,20 +274,17 @@ fun MessageInput(
             val latestChannel = rememberUpdatedState(currentChannel)
             val latestOnSendVoiceNote = rememberUpdatedState(onSendVoiceNote)
 
-            // Image button (image picker) - hide during recording
+            // Image + ASR buttons — hidden while voice-note recording is in progress
             if (!isRecording) {
-                // Revert to original separate buttons: round File button (left) and the old Image plus button (right)
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                    // DISABLE FILE PICKER
-                    //FilePickerButton(
-                    //    onFileReady = { path ->
-                    //        onSendFileNote(latestSelectedPeer.value, latestChannel.value, path)
-                    //    }
-                    //)
                     ImagePickerButton(
                         onImageReady = { outPath ->
                             onSendImageNote(latestSelectedPeer.value, latestChannel.value, outPath)
                         }
+                    )
+                    AsrRecordButton(
+                        backgroundColor = bg,
+                        onTranscription = onAsrTranscription,
                     )
                 }
             }

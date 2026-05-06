@@ -18,7 +18,7 @@ android {
         minSdk = libs.versions.minSdk.get().toInt()
         targetSdk = libs.versions.targetSdk.get().toInt()
         versionCode = 19
-        versionName = "1.2.3"
+        versionName = "1.2.3-dev2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -144,9 +144,11 @@ dependencies {
     // Nexa AI SDK (LLM inference)
     implementation("ai.nexa:core:0.0.22")
 
-    // Sherpa-ONNX ASR (Speech Recognition - replaces VOSK)
-    // Maven artifact with Android-specific packaging (includes JNI libraries)
-    implementation("com.bihe0832.android:lib-sherpa-onnx:6.25.21")
+    // Sherpa-ONNX ASR (Speech Recognition)
+    // Official k2-fsa v1.12.39 AAR bundled in app/libs/ so the Android
+    // API surface (OfflineRecognizer + asset-loaded model) matches the
+    // Whisper Tiny model files shipped in assets/models/sherpa-onnx-whisper-tiny/.
+    implementation(files("libs/sherpa-onnx.aar"))
 
     // ObjectBox Vector Database (RAG)
     implementation("io.objectbox:objectbox-kotlin:5.0.1")

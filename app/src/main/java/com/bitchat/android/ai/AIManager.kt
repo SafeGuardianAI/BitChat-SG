@@ -2,7 +2,12 @@ package com.bitchat.android.ai
 
 import android.content.Context
 import android.util.Log
+import com.bitchat.android.audio.AudioPipeline
+import com.bitchat.android.device.ConnectivityMonitor
+import com.bitchat.android.device.DeviceStateManager
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withContext
 
@@ -31,17 +36,23 @@ class AIManager(private val context: Context) {
     val ttsService = TTSService(context)
     val disasterTtsService = DisasterTTSService(ttsService, preferences)
     val deviceCapability = DeviceCapabilityService.getInstance(context)
+    val deviceStateManager = DeviceStateManager(context)
+    val connectivityMonitor = ConnectivityMonitor(context)
+    val audioPipeline = AudioPipeline(context)
 
+    val managerScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val rerankerService = RerankerService(context, preferences)
     private val ragService = RAGService(context, preferences, rerankerService)
     private val documentManager = RAGDocumentManager(context)
-    
+
     private var initialized = false
     
     suspend fun initialize(): Result<Unit> = withContext(Dispatchers.IO) {
         try {
             Log.d(TAG, "Initializing AI Manager")
             ragService.initialize()
+            deviceStateManager.startMonitoring(managerScope)
+            connectivityMonitor.registerCallback()
             initialized = true
             Result.success(Unit)
         } catch (e: Exception) {
@@ -135,7 +146,8 @@ class AIManager(private val context: Context) {
         modelLoaded = aiService.isModelLoaded(),
         modelName = preferences.getSelectedLLMModel()?.name,
         ragReady = isRAGReady(),
-        asrReady = false,
+        asrReady = ASRService.isModelAvailable(context) ||
+            android.speech.SpeechRecognizer.isRecognitionAvailable(context),
         ttsEnabled = preferences.ttsEnabled
     )
     
@@ -206,5 +218,19 @@ class AIManager(private val context: Context) {
         } catch (e: Exception) {
             Result.failure(e)
         }
+    }
+
+    /**
+     * Start the VAD/keyword background pipeline. Call once after RECORD_AUDIO
+     * permission is granted. No-op if the pipeline is already running.
+     */
+    @androidx.annotation.RequiresPermission(android.Manifest.permission.RECORD_AUDIO)
+    fun startVadPipeline(mode: AudioPipeline.PipelineMode = AudioPipeline.PipelineMode.VAD_KEYWORD) {
+        audioPipeline.start(mode, managerScope)
+    }
+
+    /** Notify the VAD pipeline that AsrAudioRecorder is taking the mic. */
+    fun setAsrActive(active: Boolean) {
+        audioPipeline.setAsrActive(active)
     }
 }
