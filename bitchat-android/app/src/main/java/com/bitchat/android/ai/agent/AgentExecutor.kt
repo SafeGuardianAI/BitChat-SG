@@ -198,10 +198,7 @@ class AgentExecutor(
                 when (response) {
                     is AIResponse.Token -> sb.append(response.text)
                     is AIResponse.Completed -> {
-                        // Use the completed text if available, otherwise keep what we have
-                        if (response.fullText.isNotBlank() && sb.isEmpty()) {
-                            sb.append(response.fullText)
-                        }
+                        // Generation completed; tokens already accumulated in sb
                     }
                     is AIResponse.Error -> {
                         Log.e(TAG, "LLM error: ${response.message}")

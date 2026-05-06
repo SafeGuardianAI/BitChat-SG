@@ -79,6 +79,7 @@ dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.appcompat)
+    implementation("androidx.exifinterface:exifinterface:1.3.7")
     
     // Compose
     implementation(platform(libs.androidx.compose.bom))

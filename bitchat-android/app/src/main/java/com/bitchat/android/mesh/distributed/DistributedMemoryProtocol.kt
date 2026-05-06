@@ -30,9 +30,9 @@ import com.google.gson.annotations.SerializedName
  */
 object DistributedMemoryProtocol {
 
-    private const val TAG = "DistMemProto"
+    @PublishedApi internal const val TAG = "DistMemProto"
     private const val PROTOCOL_VERSION = 1
-    private val gson = Gson()
+    @PublishedApi internal val gson = Gson()
 
     // ---- Message types -----------------------------------------------------
 
