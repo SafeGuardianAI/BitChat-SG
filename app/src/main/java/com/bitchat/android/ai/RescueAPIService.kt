@@ -125,35 +125,49 @@ class RescueAPIService(private val context: Context) {
     ): String? = withContext(Dispatchers.IO) {
         try {
             initialize()
-            
-            val endpoint = prefs.getString(RescueAPISettings.Endpoint.name, "") ?: ""
-            if (endpoint.isEmpty()) {
-                Log.e(TAG, "API endpoint not configured")
-                return@withContext null
-            }
-
             val victimJson = victimInfoToJson(victimInfo).toString()
-            Log.d(TAG, "Posting victim info to $currentBackend backend: $victimJson")
 
-            val base = endpoint.trimEnd('/')
-            val createUrl = if (currentBackend == BackendType.MONGODB) "$base/victim/report"
-                            else "$base/victim/create"
-            val result = makeRequest("POST", createUrl, victimJson)
-            
-            if (result != null) {
-                val victimId = extractVictimId(result)
-                if (victimId != null) {
-                    prefs.edit().putString(RescueAPISettings.LastVictimNumber.name, victimId).apply()
-                    Log.d(TAG, "Victim posted successfully with ID: $victimId")
-                    return@withContext victimId
+            // 1. Always write locally first
+            val localStore = VictimLocalStore(context)
+            val localId = localStore.enqueueCreate(victimJson, currentBackend)
+            Log.d(TAG, "Victim written locally: $localId")
+
+            // 2a. Firebase — Firestore SDK handles offline persistence natively
+            if (currentBackend == BackendType.FIREBASE) {
+                val firestoreStore = FirestoreVictimStore(context)
+                if (firestoreStore.isAvailable()) {
+                    val cloudId = firestoreStore.create(victimJson)
+                    if (cloudId != null) {
+                        localStore.markSynced(localId, cloudId)
+                        localStore.removeSynced(localId)
+                        prefs.edit().putString(RescueAPISettings.LastVictimNumber.name, cloudId).apply()
+                        return@withContext cloudId
+                    }
                 }
-            } else {
-                // Network error - propagate to mesh if callback provided
-                Log.w(TAG, "Network error posting victim - attempting mesh propagation")
-                onNetworkError?.invoke(victimJson)
-                return@withContext null
+                // Firestore unavailable or creds missing — enqueue WorkManager sync
+                VictimSyncWorker.enqueue(context)
+                return@withContext localId   // caller gets local UUID until synced
             }
 
+            // 2b. MongoDB — try HTTP; on failure the WorkManager job will retry
+            val endpoint = prefs.getString(RescueAPISettings.Endpoint.name, "") ?: ""
+            if (endpoint.isNotEmpty()) {
+                val base = endpoint.trimEnd('/')
+                val result = makeRequest("POST", "$base/victim/report", victimJson)
+                if (result != null) {
+                    val cloudId = extractVictimId(result)
+                    if (cloudId != null) {
+                        localStore.markSynced(localId, cloudId)
+                        localStore.removeSynced(localId)
+                        prefs.edit().putString(RescueAPISettings.LastVictimNumber.name, cloudId).apply()
+                        return@withContext cloudId
+                    }
+                }
+            }
+            // MongoDB offline — enqueue for retry
+            Log.w(TAG, "MongoDB offline, victim queued for sync")
+            onNetworkError?.invoke(victimJson)
+            VictimSyncWorker.enqueue(context)
             return@withContext null
         } catch (e: Exception) {
             Log.e(TAG, "Error posting victim", e)
@@ -168,32 +182,36 @@ class RescueAPIService(private val context: Context) {
     ): Boolean = withContext(Dispatchers.IO) {
         try {
             initialize()
-            
-            val endpoint = prefs.getString(RescueAPISettings.Endpoint.name, "") ?: ""
-            if (endpoint.isEmpty()) {
-                Log.e(TAG, "API endpoint not configured")
-                return@withContext false
-            }
-
             val victimJson = victimInfoToJson(victimInfo).toString()
-            val base = endpoint.trimEnd('/')
-            val updateUrl = if (currentBackend == BackendType.MONGODB) {
-                "$base/victim/update/$victimId"
-            } else {
-                "$base/victim/$victimId/update"
+
+            // 1. Write locally first
+            val localStore = VictimLocalStore(context)
+            localStore.enqueueUpdate(victimId, victimJson, currentBackend)
+
+            // 2a. Firebase
+            if (currentBackend == BackendType.FIREBASE) {
+                val firestoreStore = FirestoreVictimStore(context)
+                if (firestoreStore.isAvailable()) {
+                    return@withContext firestoreStore.update(victimId, victimJson)
+                }
+                VictimSyncWorker.enqueue(context)
+                return@withContext true   // stored locally, will sync
             }
 
-            Log.d(TAG, "Updating victim $victimId on $currentBackend backend")
-            val result = makeRequest("POST", updateUrl, victimJson)
-            
-            if (result != null) {
-                Log.d(TAG, "Victim updated successfully")
-                return@withContext true
-            } else {
-                Log.w(TAG, "Network error updating victim - attempting mesh propagation")
-                onNetworkError?.invoke(victimJson)
-                return@withContext false
+            // 2b. MongoDB
+            val endpoint = prefs.getString(RescueAPISettings.Endpoint.name, "") ?: ""
+            if (endpoint.isNotEmpty()) {
+                val base = endpoint.trimEnd('/')
+                val result = makeRequest("POST", "$base/victim/update/$victimId", victimJson)
+                if (result != null) {
+                    Log.d(TAG, "Victim updated in MongoDB: $victimId")
+                    return@withContext true
+                }
             }
+            Log.w(TAG, "MongoDB offline, update queued for sync")
+            onNetworkError?.invoke(victimJson)
+            VictimSyncWorker.enqueue(context)
+            return@withContext false
         } catch (e: Exception) {
             Log.e(TAG, "Error updating victim", e)
             return@withContext false

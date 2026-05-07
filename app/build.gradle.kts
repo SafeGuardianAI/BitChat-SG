@@ -157,6 +157,14 @@ dependencies {
     // Kotlin Serialization (JSON handling)
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
 
+    // Firebase — SDK only, no google-services plugin required.
+    // Place google-services.json in app/ to activate Firestore sync.
+    implementation(platform("com.google.firebase:firebase-bom:33.13.0"))
+    implementation("com.google.firebase:firebase-firestore-ktx")
+
+    // WorkManager — offline sync retry queue for MongoDB backend
+    implementation("androidx.work:work-runtime-ktx:2.10.1")
+
     // OkDownload (Model downloads - from nexa-sdk-examples)
     // Note: Add AAR files to libs/ directory
     // implementation(files("libs/okdownload-core.aar"))
